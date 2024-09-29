@@ -1898,6 +1898,149 @@ see more in Pytorch page：
 
 ![image-20240925121622420](./assets/image-20240925121622420.png)
 
+# Logistic Regression
+
+叫回归，但分类！
+
+分类的结果不是确切的给出某一个类，而是给出对于给定的输入，输出所有类下的概率值，那个输出类的概率值越大，我们就能判断该输入属于哪个类。
+
+**因此最后的结果就是各个类的概率值，并且所有类的概率值加起来等于1**
+
+对于线性回归得到的结果是在一整个实数域里，采用sigmoid函数可以将线性回归得到的结果映射到[0, 1] 当中。
+
+![image-20240929164053196](./assets/image-20240929164053196.png)
+
+sigmoid函数的导函数大致形状是这样的：
+
+<img src="./assets/image-20240929164619386.png" alt="image-20240929164619386" style="zoom:50%;" />
+
+对于某一个函数，大于0时，导数随着x增大逐渐趋近于0，小于0时，导数随着x减小逐渐趋近于0，这种函数叫做**饱和函数**，长得有点像是正态分布。
+
+其他sigmoid函数：
+
+![image-20240929165056336](./assets/image-20240929165056336.png)
+
+**由于Logistic Function使用比较多，所以很多时候它就成了sigmoid函数**
+
+![image-20240929165416986](./assets/image-20240929165416986.png)
+
+**在论文中看到$\sigma (……)$**这里的$\sigma $指的就是sigmoid函数
+
+我们在线性回归里用到的MSE损失函数：
+$$
+\text { loss }=(\hat{y}-y)^{2}=(x \cdot \omega-y)^{2}
+$$
+反应的是$y$与$\hat{y}$之间的距离，而对于二分类任务，我们得到的$y$与$\hat{y}$之间是两个分布之间的差距，是一种离散的数据表示。对于这种情况我们可以使用**KL散度**与**交叉熵**。
+
+交叉熵如何计算两个分布之间的差异？
+$$
+H(P, Q) = -\sum_x P(x) \log Q(x)
+$$
+<img src="./assets/image-20240929173604763.png" alt="image-20240929173604763" style="zoom:50%;" />
+
+例如：
+
+![image-20240929173657851](./assets/image-20240929173657851.png)
+
+利用交叉熵得到的二分类的loss如下：
+$$
+\text { loss }=-(y \log \hat{y}+(1-y) \log (1-\hat{y}))
+$$
+$y = 1$的时候，$loss = -y \log \hat{y}$，得到的loss就是一个减函数，里面的log就是一个增函数，$\hat{y}$的值最大为1，要想让$\hat{y}$逼近$y$，$\hat{y}$只能接近于1才能与$y$一样，最后的loss也就取到最小值。
+
+$y = 0$的时候，$loss = -\log (1-\hat{y})$，得到的loss就是一个增函数，只要当$\hat{y}$趋近于$y = 0$ 的时候，loss才最小。
+
+带入值进行查看：
+
+![image-20240929174606644](./assets/image-20240929174606644.png)
+
+最后的Mini-Batch就是求均值。
+
+深度学习4个基本步骤：
+
+![image-20240929175944042](./assets/image-20240929175944042.png)
+
+```python
+import torch.nn
+import torchvision
+
+import torch.nn.functional as F
+
+# 对于这样一个训练数据，可以理解为，对于一门科目，每周用1、2小时都没通过，用了3小时就通过了，问用4小时能通过吗？
+x_data = torch.Tensor([[1.0], [2.0], [3.0]])
+y_data = torch.Tensor([[0], [0], [1]])
+
+class LogisticRegressionModel(torch.nn.Module):
+    def __init__(self):
+        super(LogisticRegressionModel, self).__init__()
+        self.linear = torch.nn.Linear(1, 1)
+
+    def forward(self, x):
+        y_pred = F.sigmoid(self.linear(x))  # 注意这里将输出再输入到sigmoid函数中
+        return y_pred
+
+model = LogisticRegressionModel()
+
+criterion = torch.nn.BCELoss(size_average=False) # BCE计算损失的方法
+optimizer = torch.optim.SGD(model.parameters(), lr = 0.01)
+
+for epoch in range(1000):
+    y_pred = model(x_data) # 前馈过程
+    loss = criterion(y_pred, y_data) # 计算损失
+    print(epoch, loss) # 打印的时候会自动调用loss的__str()__，不会构建计算图
+
+    optimizer.zero_grad() # 先将参数的梯度归0
+    loss.backward() # 进行反向传播，更新参数的grad
+    optimizer.step() # 根据参数和学习率自动更新参数的data
+
+# Output weight and bias
+print('w = ', model.linear.weight.item()) # 注意weight是一个矩阵，只有一个值，可以使用item();调用关系类似于：model->linear->weight
+print('b = ', model.linear.bias.item())
+# Test Model
+x_test = torch.Tensor([[4.0]])
+y_test = model(x_test)
+print( 'y pred = ', y_test.data)
+```
+
+```python
+993 tensor(1.0491, grad_fn=<BinaryCrossEntropyBackward0>)
+994 tensor(1.0486, grad_fn=<BinaryCrossEntropyBackward0>)
+995 tensor(1.0481, grad_fn=<BinaryCrossEntropyBackward0>)
+996 tensor(1.0477, grad_fn=<BinaryCrossEntropyBackward0>)
+997 tensor(1.0472, grad_fn=<BinaryCrossEntropyBackward0>)
+998 tensor(1.0467, grad_fn=<BinaryCrossEntropyBackward0>)
+999 tensor(1.0462, grad_fn=<BinaryCrossEntropyBackward0>)
+w =  1.1991130113601685
+b =  -2.896817922592163
+y pred =  tensor([[0.8699]])
+```
+
+我们测试一组数据，x的值从0到10：
+
+```python
+import numpy as np  # 导入 NumPy 库，用于数值计算
+import matplotlib.pyplot as plt  # 导入 Matplotlib 的 pyplot 模块，用于绘图
+
+x = np.linspace(0, 10, 200)  # 创建一个从 0 到 10 的等差数列，包含 200 个点
+x_t = torch.Tensor(x).view((200, 1))  # 将 x 转换为 PyTorch 张量，并重塑为 200x1 的二维张量
+y_t = model(x_t)  # 使用预定义的模型 'model' 对输入张量 x_t 进行预测，得到输出张量 y_t
+y = y_t.data.numpy()  # 将 PyTorch 张量 y_t 转换回 NumPy 数组
+plt.plot(x, y)  # 绘制 x 和 y 的关系图
+plt.plot([0, 10], [0.5, 0.5], c='r')  # 绘制一条水平线，从 (0, 0.5) 到 (10, 0.5)，颜色为红色
+plt.xlabel('Hour')  # 设置 x 轴标签为 'Hour'
+plt.ylabel('Probability of pass')  # 设置 y 轴标签为 'Probability of pass'
+plt.grid()  # 在图表上添加网格线
+plt.show()  # 显示图形
+```
+
+<img src="./assets/image-20240929180801077.png" alt="image-20240929180801077" style="zoom:50%;" />
+
+我们发现学习时长在2.5左右的时候，通过率为0.5。越大，通过率越高，越小接近于0，通过率越低。
+
+# 处理多维输入的数据
+
+
+
 # 课程练习作业
 
 ## 作业一
@@ -2524,6 +2667,21 @@ conda config --set show_channel_urls yes
 ```
 
 # pytorch使用
+
+## 下载常用数据集
+
+```python
+# torchvision中有一个datasets包里包含一个MNIST数据集，root就是数据集位置，train表示是否是数据集，download表示是否下载
+# 如果初次使用就需要下载。
+train_set = torchvision.datasets.MNIST(root= './datasets/mnist', train=True, download=True)
+test_set = torchvision.datasets.MNIST(root='./datasets/mnist', train=False, download=True)
+
+# CIFAR10数据集
+train_set = torchvision.datasets.CIFAR10(root= './datasets/cifar10', train=True, download=True)
+test_set = torchvision.datasets.CIFAR10(root='./datasets/cifar10', train=False, download=True)
+```
+
+
 
 ## 加载数据
 
