@@ -2081,26 +2081,9 @@ $$
 这里的$\sigma()$就是sigmoid函数$\sigma(x) = \frac{1}{1+e^{-x}} $。
 
 对于每一个$Z^{(i)}$，从第一个到第八个都需要计算$\sigma()$函数：
-$$
-\begin{bmatrix}
-    \hat{y}^{(1)} \\
-    \vdots \\
-    \hat{y}^{(N)}
-\end{bmatrix}
-=
-\begin{bmatrix}
-    \sigma(Z^{(1)}) \\
-    \vdots \\
-    \sigma(Z^{(N)})
-\end{bmatrix}
-=
-\sigma(
-\begin{bmatrix}
-    Z^{(1)} \\
-    \vdots \\
-    Z^{(N)}
-\end{bmatrix})
-$$
+
+![image-20241010233631675](./assets/image-20241010233631675.png)
+
 在Pytorch中，提供给的exp函数支持对向量中每一个元素进行处理（也就是按照向量计算的形式）：
 $$
 \texttt{torch.exp}\left(\begin{bmatrix}
@@ -2129,30 +2112,11 @@ z^{(N)} = \left[\begin{array}{ccc}
 \end{array}\right] + b
 $$
 $z^{(i)}$可以组合成一个向量，那么结果就可以表示为这样：
-$$
-\begin{bmatrix}
-    z^{(1)} \\
-    \vdots \\
-    z^{(N)}
-\end{bmatrix}
-=
-\begin{bmatrix}
-    x_1^{(1)} & \cdots & x_8^{(1)} \\
-    \vdots   &        & \vdots   \\
-    x_1^{(N)} & \cdots & x_8^{(N)}
-\end{bmatrix}
-\begin{bmatrix}
-    \omega_1 \\
-    \vdots   \\
-    \omega_8
-\end{bmatrix}
-+
-\begin{bmatrix}
-    b \\
-    \vdots \\
-    b
-\end{bmatrix}
-$$
+
+
+
+![image-20241010233818049](./assets/image-20241010233818049.png)
+
 即变为了这样，变成了矩阵的运算：
 
 <img src="./assets/image-20240929202039082.png" alt="image-20240929202039082" style="zoom:50%;" />
