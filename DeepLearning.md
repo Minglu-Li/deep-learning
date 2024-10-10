@@ -1981,7 +1981,11 @@ class LogisticRegressionModel(torch.nn.Module):
 
 model = LogisticRegressionModel()
 
+# 有一个二分类任务，并且使用 BCELoss 来计算损失，对于一批包含多个样本的数据，size_average=True 将返回这批
+# 数据的平均损失，而 size_average=False 将返回这批数据的总损失。
 criterion = torch.nn.BCELoss(size_average=False) # BCE计算损失的方法
+# model.parameters()：这是传递给优化器的第一个参数，
+# 它返回一个包含模型所有可学习参数（即权重和偏置等）的迭代器。这些参数将会被优化器用来进行梯度下降。
 optimizer = torch.optim.SGD(model.parameters(), lr = 0.01)
 
 for epoch in range(1000):
@@ -2038,6 +2042,452 @@ plt.show()  # 显示图形
 我们发现学习时长在2.5左右的时候，通过率为0.5。越大，通过率越高，越小接近于0，通过率越低。
 
 # 处理多维输入的数据
+
+对于这样的一个多维数据：
+
+![image-20240929200805454](./assets/image-20240929200805454.png)
+
+一行为一个样本，一列为一个特征。
+
+对于这样的输入数据，Logistic Regression Model就有变成这样：
+
+<img src="./assets/image-20240929200931538.png" alt="image-20240929200931538" style="zoom:50%;" />
+
+输入的数据有8个特征，其中
+$$
+\sum_{n=1}^{8} \mathbf{x}_n^{(i)} \cdot \omega_n = [\mathbf{x}_1^{(i)}, \ldots, \mathbf{x}_8^{(i)}] \begin{bmatrix}
+    \omega_1 \\
+    \vdots \\
+    \omega_8
+\end{bmatrix}
+$$
+然后模型就变为了这样：
+$$
+\hat{y}^{(i)} = \sigma(\left[\begin{array}{ccc}
+    x_1^{(i)} & \cdots & x_8^{(i)}
+\end{array}\right]\left[\begin{array}{c}
+    \omega_1 \\ \vdots \\ \omega_8
+\end{array}\right] + b) \\
+= \sigma(Z^{(i)})
+$$
+其中：
+$$
+Z^{(i)} =\left[\begin{array}{ccc}
+    x_1^{(i)} & \cdots & x_8^{(i)}
+\end{array}\right]\left[\begin{array}{c}
+    \omega_1 \\ \vdots \\ \omega_8
+\end{array}\right] + b
+$$
+这里的$\sigma()$就是sigmoid函数$\sigma(x) = \frac{1}{1+e^{-x}} $。
+
+对于每一个$Z^{(i)}$，从第一个到第八个都需要计算$\sigma()$函数：
+$$
+\begin{bmatrix}
+    \hat{y}^{(1)} \\
+    \vdots \\
+    \hat{y}^{(N)}
+\end{bmatrix}
+=
+\begin{bmatrix}
+    \sigma(Z^{(1)}) \\
+    \vdots \\
+    \sigma(Z^{(N)})
+\end{bmatrix}
+=
+\sigma(
+\begin{bmatrix}
+    Z^{(1)} \\
+    \vdots \\
+    Z^{(N)}
+\end{bmatrix})
+$$
+在Pytorch中，提供给的exp函数支持对向量中每一个元素进行处理（也就是按照向量计算的形式）：
+$$
+\texttt{torch.exp}\left(\begin{bmatrix}
+    x_1 \\
+    x_2 \\
+    x_3
+\end{bmatrix}\right) \quad \rightarrow \quad
+\begin{bmatrix}
+    e^{x_1} \\
+    e^{x_2} \\
+    e^{x_3}
+\end{bmatrix}
+$$
+这里就变成了这样：
+$$
+z^{(1)} = \left[\begin{array}{ccc}
+    x_1^{(1)} & \cdots & x_8^{(1)}
+\end{array}\right]\left[\begin{array}{c}
+    \omega_1 \\ \vdots \\ \omega_8
+\end{array}\right] + b \\
+\vdots \\
+z^{(N)} = \left[\begin{array}{ccc}
+    x_1^{(N)} & \cdots & x_8^{(N)}
+\end{array}\right]\left[\begin{array}{c}
+    \omega_1 \\ \vdots \\ \omega_8
+\end{array}\right] + b
+$$
+$z^{(i)}$可以组合成一个向量，那么结果就可以表示为这样：
+$$
+\begin{bmatrix}
+    z^{(1)} \\
+    \vdots \\
+    z^{(N)}
+\end{bmatrix}
+=
+\begin{bmatrix}
+    x_1^{(1)} & \cdots & x_8^{(1)} \\
+    \vdots   &        & \vdots   \\
+    x_1^{(N)} & \cdots & x_8^{(N)}
+\end{bmatrix}
+\begin{bmatrix}
+    \omega_1 \\
+    \vdots   \\
+    \omega_8
+\end{bmatrix}
++
+\begin{bmatrix}
+    b \\
+    \vdots \\
+    b
+\end{bmatrix}
+$$
+即变为了这样，变成了矩阵的运算：
+
+<img src="./assets/image-20240929202039082.png" alt="image-20240929202039082" style="zoom:50%;" />
+
+针对输入的特征数量发生变化，我们在代码中作如下修改：
+
+```python
+class Model(torch.nn.Module):
+    def __init__(self):
+        super(Model, self).__init__()
+        self.linear = torch.nn.Linear(8, 1) # 输入8维，输出1维
+
+    def forward(self, x):
+        y_pred = F.sigmoid(self.linear(x))  
+        return y_pred
+```
+
+在设计模型的时候`self.linear = torch.nn.Linear(8, 1)`，就意味着输入8维输出1维，就上一个例子而言，输入是一个$N×8$的，输出是一个$N×1$的，那么参数矩阵就是一个$8×1$的。
+
+如果代码是这样的呢？`self.linear = torch.nn.Linear(8, 2)`，这一个线性模型就是将一个$N×8$的输入映射到一个$N×2$的输出当中，因为这只是一个线性变化，在线性代数当中$Y = A X + b$，其实就是将$X$向量经过矩阵$A$变换到$Y$向量。**这是一套纯粹的线性变化。**还是接着输出$N×2$维，我们最后的结果依然是$N×1$维的，那怎么办？继续采用线性变化，将$N×2$维映射到$N×1$维的。变化矩阵就是一个$2×1$大小的矩阵。
+
+但是注意，我们每做一次线性变化，都将线性变化的结果加上sigmoid函数，使得加完sigmoid后，这一步最后的结果无法直接使用线性变化的式子表达出来，也就是加入sigmoid引入非线性。经过一层线性变换后，将结果进行sigmoid，然后再经过一层线性变化之后，将结果进行sigmoid，最后经过一层有一层的线性变化，并在每一层线性变化之后加入sigmoid（激活函数）从而形成一个多层的线性变换+激活函数的网络，使得整个的网络具有非线性。
+
+可以从8维降到6维然后再降到2维，然后再……
+
+也可以从8维升到24维，然后再升到12维，然后再……
+
+![image-20240929204538868](./assets/image-20240929204538868.png)
+
+**一般来说，中间层数越多，中间的神经元越多，则整个网络取得的非线性变化的学习能力越强。**但是学习能力越强也不一定很好，因为学习特别好可能会把输入数据中的噪声也学习进去了，噪声是我们不想要的数据。
+
+<img src="./assets/image-20240929210033069.png" alt="image-20240929210033069" style="zoom:50%;" />
+
+```python
+#!/usr/bin/env python
+# -*- coding: UTF-8 -*-
+'''
+@File      ：Multiple_Dimension_Input.py
+@IDE       ：PyCharm 
+@Author    ：lml
+@Date      ：2024/9/29 20:04 
+@Descriable：处理多维输入数据
+'''
+import torch
+import torch.nn.functional as F
+import numpy as np
+
+# 读取数据
+# 加载数据，使用csv可以，将其压缩成gz也可以；对于神经网络里使用float32就已经足够了，只有极少数的显卡会用到double类型
+xy = np.loadtxt('diabetes.csv.gz', delimiter=',', dtype=np.float32)
+# 利用from_numpy可以将numpy数据转成Tensor数据
+x_data = torch.from_numpy(xy[:, : -1]) # x_data要所有行，然后从第一列开始到倒数第二列，最后一列不要
+y_data = torch.from_numpy(xy[:, [-1]]) # y_data要所有行，然后只取最后一列
+
+class Model(torch.nn.Module):
+    def __init__(self):
+        # super(Model, self).__init__() 这行代码的作用是调用 Model 类的父类（在这个情况下是
+        # torch.nn.Module）的构造函数（即 __init__ 方法）。
+        super(Model, self).__init__()
+        self.linear1 = torch.nn.Linear(8, 6)
+        self.linear2 = torch.nn.Linear(6, 4)
+        self.linear3 = torch.nn.Linear(4, 1)
+        self.sigmoid = torch.nn.Sigmoid()
+
+    def forward(self, x):
+        x = self.sigmoid(self.linear1(x))
+        x = self.sigmoid(self.linear2(x))
+        x = self.sigmoid(self.linear3(x))
+        return x
+
+model = Model()
+
+criterion = torch.nn.BCELoss(size_average=True)
+optimizer = torch.optim.SGD(model.parameters(), lr= 0.1)
+
+for epoch in range(100):
+    y_pred = model(x_data) # 这里是将所有的x都传输进来了，并没有使用mini-batch
+    loss = criterion(y_pred, y_data)
+    print(epoch, loss.item())
+
+    optimizer.zero_grad()
+    loss.backward()
+
+    optimizer.step()
+
+```
+
+```python
+93 0.6453307271003723
+94 0.6453298926353455
+95 0.6453291177749634
+96 0.6453282237052917
+97 0.6453273892402649
+98 0.6453266143798828
+99 0.6453257203102112
+```
+
+如果我对模型做如下的修改：
+
+```python
+class Model(torch.nn.Module):
+    def __init__(self):
+        # super(Model, self).__init__() 这行代码的作用是调用 Model 类的父类（在这个情况下是
+        # torch.nn.Module）的构造函数（即 __init__ 方法）。
+        super(Model, self).__init__()
+        self.linear1 = torch.nn.Linear(8, 6)
+        self.linear2 = torch.nn.Linear(6, 4)
+        self.linear3 = torch.nn.Linear(4, 1)
+        self.sigmoid = torch.nn.Sigmoid()
+        self.relu = torch.nn.ReLU()
+
+    def forward(self, x):
+        x = self.relu(self.linear1(x))
+        x = self.relu(self.linear2(x))
+        x = self.relu(self.linear3(x))
+        return x
+```
+
+会发现运行会出错，
+```python
+Traceback (most recent call last):
+  File "D:\Learning\Experiments\ML_Study\DeepLearning\07_Multiple_Dimension_Input\Multiple_Dimension_Input.py", line 45, in <module>
+    loss = criterion(y_pred, y_data)
+  File "D:\Sofeware\anaconda\envs\ML\lib\site-packages\torch\nn\modules\module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "D:\Sofeware\anaconda\envs\ML\lib\site-packages\torch\nn\modules\module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "D:\Sofeware\anaconda\envs\ML\lib\site-packages\torch\nn\modules\loss.py", line 621, in forward
+    return F.binary_cross_entropy(input, target, weight=self.weight, reduction=self.reduction)
+  File "D:\Sofeware\anaconda\envs\ML\lib\site-packages\torch\nn\functional.py", line 3172, in binary_cross_entropy
+    return torch._C._nn.binary_cross_entropy(input, target, weight, reduction_enum)
+RuntimeError: all elements of input should be between 0 and 1
+```
+
+是因为 `BCELoss`（二元交叉熵损失）要求输入（预测值 `y_pred`）必须在 0 和 1 之间。然而，在你的模型定义中，最后一层使用了 ReLU 激活函数，ReLU 函数可以输出任意非负数，这意味着输出可能大于 1，这不符合 BCELoss 的要求。
+
+为了修复这个问题，你需要确保模型的最后一层输出是经过 Sigmoid 激活函数处理的，因为 Sigmoid 函数将输出压缩到 (0, 1) 范围内，这样就符合 BCELoss 的输入要求了。
+
+我们现在观察一下RELU函数图像：
+
+<img src="./assets/image-20241009114253117.png" alt="image-20241009114253117" style="zoom:50%;" />
+
+结果却是是这样，而且如果输入小于0，直接变为0，如果后续计算$log$的操作，就会出现异常，除此之外，输出也可能按照我们的这个问题，会大于1，不能再传入BCE里面。
+
+可以这样修改问题：
+
+```python
+    def forward(self, x):
+        x = self.relu(self.linear1(x))
+        x = self.relu(self.linear2(x))
+        x = self.sigmoid(self.linear3(x))
+        return x
+```
+
+结果：
+
+```python
+995 0.4600551724433899
+996 0.46004602313041687
+997 0.46003690361976624
+998 0.4600277543067932
+999 0.46001866459846497
+```
+
+最后我们的损失值降到了0.4多。可以看出这是**有进步的！！！**
+
+## 激活函数
+
+https://dashee87.github.io/deep%20learning/visualising-activation-functions-in-neural-networks/
+
+![image-20241009105831181](./assets/image-20241009105831181.png)
+
+改变不同的激活函数能够降低损失，比如这里换成RELU激活函数
+
+# Dataset和Dataloader
+
+## `epoch`、`Batch-Size`与`Iteration`定义
+
+epoch就是训练的次数；
+
+Batch-Size就是每个mini-batch的大小，即进行一次前馈和反向传播的样本数量的大小；
+
+Iteration就是总的样本数量÷Batch-Size，即做几次前馈和反向传播。
+
+DataLoader：
+
+**参数：**
+
+* batch_size：指定mini-batch的大小
+* shuffle：Ture / False 选取mini-batch的时候是不是随机选取的。
+
+![image-20241009205804367](./assets/image-20241009205804367.png)
+
+基本的数据集类可以如下所示：
+
+```python
+class DiabetesDataset(Dataset):
+    def __init__(self):
+        pass
+
+    def __getitem__(self, item): # 类似于之间讲过的__call()__魔法方法，以后可以利用[i]索引到数据
+        pass
+
+    def __len__(self): # 魔法方法，返回Dataset的长度
+        pass
+```
+
+对于``__init()__`方法中我们有如下两种处理数据的方法：
+
+* 如果数据集很小，我们可以全部读取进来；比如糖尿病的那个关系表，就很简单
+* 如果数据集很大，比如说很多张图片，可以先将图片文件名做成一个列表，对应的结果如果比较小，也可以全部读进来，如果比较大，也将对应的结果文件名做成列表，Dataloader读到i个文件的时候，再将i个文件加载进内存。属于是动态加载数据确实
+
+可能会遇到的问题：在创建子进程的时候可能因为系统的问题出现这样的问题，即win下面生成子进程使用的spawn函数，fork是Linux下的新建子进程的函数。如果遇到这种情况，加一个if语句就可以：
+
+![image-20241009213221248](./assets/image-20241009213221248.png)
+
+错误：
+
+![image-20241009221958806](./assets/image-20241009221958806.png)
+
+如果遇到这种情况，加一个if语句就可以：
+
+<img src="./assets/image-20241009213352654.png" alt="image-20241009213352654" style="zoom:50%;" />
+
+
+
+对于` for i, data in enumerate(train_loader, 0):`的理解：
+
+用于遍历一个数据加载器（`train_loader`），通常在训练神经网络时使用。让我们分解一下这行代码：
+
+- `for i, data in ...`：这是一个 for 循环，其中 `i` 是当前迭代的索引（从 0 开始），而 `data` 是从 `train_loader` 中获取的数据批次。
+- `enumerate(..., 0)`：`enumerate` 是 Python 的内置函数，它允许你在遍历序列（如列表、元组等）时同时获得元素及其对应的索引。第二个参数 `0` 指定了索引的起始值，默认情况下就是 0，所以这里可以省略。
+
+`train_loader` 通常是 `torch.utils.data.DataLoader` 类的一个实例，它提供了对数据集的迭代访问，并且可以自动处理批处理、数据混洗等功能。每次迭代时，`train_loader` 会返回一个批次的数据，这个数据通常是一个包含输入和标签的元组。
+
+```python
+#!/usr/bin/env python
+# -*- coding: UTF-8 -*-
+'''
+@File      ：Dataset_DataLoader_Use.py
+@IDE       ：PyCharm 
+@Author    ：lml
+@Date      ：2024/10/9 20:58 
+@Descriable：Dataset DataLoader使用
+'''
+import numpy as np
+import torch
+from torch.utils.data import Dataset # Dataset是一个抽象类，不能实例化，只能被继承
+from torch.utils.data import DataLoader # Dataloader是用来加载数据的做batch-size和Shuffle
+
+class DiabetesDataset(Dataset):
+    def __init__(self, filepath):
+        xy = np.loadtxt(filepath, delimiter=',', dtype=np.float32)
+        self.len = xy.shape[0] # 在糖尿病这个数据集里读取到的xy就是一个二维数据，是一个N×9的二维数组，这个二维数组的shape是一个(N, 9)的元组，那么shape[0]读取到的就是N
+        self.x_data = torch.from_numpy(xy[:, : -1])
+        self.y_data = torch.from_numpy(xy[:, [-1]])
+
+    def __getitem__(self, index): # 类似于之间讲过的__call()__魔法方法，以后可以利用[i]索引到数据
+        return self.x_data[index], self.y_data[index] # 返回的是一个元组
+
+    def __len__(self): # 魔法方法，返回Dataset的长度
+        return self.len
+
+class Model(torch.nn.Module):
+    def __init__(self):
+        # super(Model, self).__init__() 这行代码的作用是调用 Model 类的父类（在这个情况下是
+        # torch.nn.Module）的构造函数（即 __init__ 方法）。
+        super(Model, self).__init__()
+        self.linear1 = torch.nn.Linear(8, 6)
+        self.linear2 = torch.nn.Linear(6, 4)
+        self.linear3 = torch.nn.Linear(4, 1)
+        self.sigmoid = torch.nn.Sigmoid()
+        self.relu = torch.nn.ReLU()
+
+    def forward(self, x):
+        x = self.relu(self.linear1(x))
+        x = self.relu(self.linear2(x))
+        x = self.sigmoid(self.linear3(x))
+        return x
+
+dataset = DiabetesDataset('diabetes.csv.gz')
+train_loader = DataLoader(dataset=dataset, batch_size=32, shuffle=True, num_workers=2) # num_workers表示需要几个并行的线程读取数据集
+
+model = Model()
+
+criterion = torch.nn.BCELoss(size_average=True)
+optimizer = torch.optim.SGD(model.parameters(), lr= 0.1)
+
+if __name__ == '__main__':
+    for epoch in range(100):
+        for i, data in enumerate(train_loader, 0):
+            # 准备数据
+            # 读取一个一个的样本与标签，直到达到batch-size，将读取到的样本与标签存入data，然后再分为inputs和labels
+            inputs, labels = data
+            # 进行前向传播
+            y_pred = model(inputs)
+            loss = criterion(y_pred, labels)
+            print(epoch, i, loss.item())
+
+            # 进行反向传播
+            optimizer.zero_grad()
+            loss.backward()
+
+            # 更新优化器
+            optimizer.step()
+```
+
+输出：
+
+```python
+99 0 0.2786310613155365
+99 1 0.3610200881958008
+99 2 0.28721973299980164
+99 3 0.3709169626235962
+99 4 0.4949190318584442
+99 5 0.3622228801250458
+99 6 0.40255066752433777
+99 7 0.4111954867839813
+99 8 0.357909232378006
+99 9 0.4491279721260071
+99 10 0.5299336314201355
+99 11 0.43551206588745117
+99 12 0.36443111300468445
+99 13 0.44266992807388306
+99 14 0.6776905059814453
+99 15 0.3197677731513977
+99 16 0.5225685834884644
+99 17 0.4366188645362854
+99 18 0.46013760566711426
+99 19 0.4385663866996765
+99 20 0.4892987310886383
+99 21 0.5385307669639587
+99 22 0.681429386138916
+99 23 0.4345366060733795
+```
 
 
 
@@ -2510,7 +2960,9 @@ predict (after training) 4 8.544172286987305
 
 模型训练100次后可以看到当x=4时，y=8.5，与正确值8相差比较大。原因可能是数据集本身是一次函数的数据，模型是二次函数。所以模型本身就不适合这个数据集，所以才导致预测结果和正确值相差比较大的情况。
 
+## 作业三
 
+![image-20241009223929818](./assets/image-20241009223929818.png)
 
 # 配置环境
 
@@ -2573,6 +3025,10 @@ jupyter notebook
 新建文件：
 
 ![image-20240720210937149](./assets/image-20240720210937149.png)
+
+# anaconda使用
+
+conda一系列的指令：[【anaconda】conda创建、查看、删除虚拟环境（anaconda命令集）_conda 创建环境-CSDN博客](https://blog.csdn.net/miracleoa/article/details/106115730)
 
 # 有力的工具
 
