@@ -2085,35 +2085,14 @@ $$
 ![image-20241010233631675](./assets/image-20241010233631675.png)
 
 在Pytorch中，提供给的exp函数支持对向量中每一个元素进行处理（也就是按照向量计算的形式）：
-$$
-\texttt{torch.exp}\left(\begin{bmatrix}
-    x_1 \\
-    x_2 \\
-    x_3
-\end{bmatrix}\right) \quad \rightarrow \quad
-\begin{bmatrix}
-    e^{x_1} \\
-    e^{x_2} \\
-    e^{x_3}
-\end{bmatrix}
-$$
+
+![image-20241010234936352](./assets/image-20241010234936352.png)
+
 这里就变成了这样：
-$$
-z^{(1)} = \left[\begin{array}{ccc}
-    x_1^{(1)} & \cdots & x_8^{(1)}
-\end{array}\right]\left[\begin{array}{c}
-    \omega_1 \\ \vdots \\ \omega_8
-\end{array}\right] + b \\
-\vdots \\
-z^{(N)} = \left[\begin{array}{ccc}
-    x_1^{(N)} & \cdots & x_8^{(N)}
-\end{array}\right]\left[\begin{array}{c}
-    \omega_1 \\ \vdots \\ \omega_8
-\end{array}\right] + b
-$$
+
+![image-20241010234918920](./assets/image-20241010234918920.png)
+
 $z^{(i)}$可以组合成一个向量，那么结果就可以表示为这样：
-
-
 
 ![image-20241010233818049](./assets/image-20241010233818049.png)
 
