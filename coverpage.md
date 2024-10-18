@@ -8,7 +8,7 @@
 - 又菜又爱玩的玩家
 - 学以致用，无限进步
 
-[开始](#main)
+[开始](./README.md)
 [GitHub](https://github.com/Minglu-Li/deep-learning)
 [联系我](./Me.md)
 <!-- [NPM](https://www.npmjs.com/package/docsify-themeable) -->
