@@ -1,5 +1,21 @@
 # 函数使用
 
+## print函数
+
+方法1：用print() 输入多个信息逗号，分隔的方法，虽然比较山寨但是可用，就是比较繁琐
+`print(sh1.name,"这个表有",rows,"行",columns,"列",sep="")`
+用逗号 ,把字符串，数字，变量分隔，拼凑成一句话，但是需要把sep设置为""不空格，否则默认为 " " 显示结果比较丑
+方法2：print("%s%d" %{var1,var2}) 格式
+`print("%s这个表有%d行%d列"  %(sh1,rows,columns))`
+s% 字符串
+d%  数字
+方法3：print("{0}{1}".format(var1,var2)) 格式
+`print("{0}这个表有{1}行{2}列".format(sh1.name,rows,columns))`
+方法4：print(f"{var1}{var2}") 格式
+f也是format，这是一种比较新也是比较简便的格式
+`print(f"{sh1.name}这个表有{rows}行{columns}列")`
+
+
 ## Zip函数
 
 在 Python 中，`zip()` 函数是一个非常有用的内置函数，用于将多个可迭代对象（如列表、元组等）“压缩”在一起，形成一个新的迭代器，它可以逐个组合来自每个可迭代对象的元素。

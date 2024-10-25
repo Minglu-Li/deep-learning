@@ -2163,13 +2163,15 @@ Accuracy on test set: 97 %
 
 ![image-20241015232046100](./assets/image-20241015232046100.png)
 
-那加入输入的通道数量有n个，那么我们就必须要有n个卷积核与之进行处理，之后我们就会又得到新的通道：
+那假如输入的通道数量有n个，那么我们就必须要有n个卷积核与之进行处理，之后我们就会又得到新的通道：
 
 ![image-20241015232707890](./assets/image-20241015232707890.png)
 
 那有n个通道的图像，经过卷积之后需要生成m个通道呢？
 
 ![image-20241015232911460](./assets/image-20241015232911460.png)
+
+**卷积核的通道数与输入图像的通道数是一致的。**
 
 最后将这一过程抽象成这样：
 
@@ -2312,7 +2314,11 @@ tensor([[[[4., 8.],
           [9., 8.]]]])
 ```
 
+## 使用MNIST数据集进行网络模型的设计
+
 ![image-20241016123910785](./assets/image-20241016123910785.png)
+
+**注意：我们需要计算每一次卷积后的图像的尺寸大小，比如这里，没有做padding和stride，kernal的大小为5，意味着小两圈，即变长减4。所以第一个我们看到就是从28到24的变化**
 
 对于之前做的MNIST数据集，我们设计卷积神经网络就是这样的步骤：
 
@@ -2467,6 +2473,154 @@ Accuracy on test set: 98 %
 
 我们看到相对于上一次只使用全连接网络的准确率上升了一个百分点！！！
 
+### 代码解释
+
+#### x.size()
+
+```python
+def forward(self, x):
+    # Flatten data from (n, 1, 28, 28) to (n, 784)
+    batch_size = x.size(0)
+    x = F.relu(self.pooling(self.conv1(x)))
+    x = F.relu(self.pooling(self.conv2(x)))
+    x = x.view(batch_size, -1) # flatten
+    x = self.fc(x)
+    return x
+```
+
+在 PyTorch 中，`x.size()` 返回的是一个 `torch.Size` 对象，它类似于 Python 的元组（tuple），包含了张量 `x` 在每个维度上的大小。`torch.Size` 对象是不可变的，并且可以像元组一样被索引和迭代。
+
+例如，如果你有一个形状为 `(batch_size, channels, height, width)` 的 4D 张量 `x`，那么 `x.size()` 将返回一个 `torch.Size` 对象，表示这个张量在每个维度上的大小。
+
+**示例**
+
+假设你有一个形状为 `(32, 1, 28, 28)` 的张量 `x`，其中：
+
+- 第一维 `32` 是批处理大小（batch size）。
+- 第二维 `1` 是通道数（对于灰度图像，通常为 1；对于彩色图像，通常是 3）。
+- 第三维 `28` 和第四维 `28` 分别是图像的高度和宽度。
+
+```python
+import torch
+
+# 创建一个形状为 (32, 1, 28, 28) 的张量
+x = torch.randn(32, 1, 28, 28)
+
+# 获取张量的大小
+size = x.size()
+
+print(size)  # 输出: torch.Size([32, 1, 28, 28])
+print(type(size))  # 输出: <class 'torch.Size'>
+```
+
+**访问特定维度的大小**
+
+你可以通过索引来访问 `torch.Size` 对象中的特定维度的大小。例如：
+
+```python
+batch_size = x.size(0)  # 获取第一维的大小，即 batch size
+channels = x.size(1)    # 获取第二维的大小，即通道数
+height = x.size(2)      # 获取第三维的大小，即高度
+width = x.size(3)       # 获取第四维的大小，即宽度
+
+print(batch_size)  # 输出: 32
+print(channels)    # 输出: 1
+print(height)      # 输出: 28
+print(width)       # 输出: 28
+```
+
+**总结**
+
+- `x.size()` 返回一个 `torch.Size` 对象，它包含了张量 `x` 在每个维度上的大小。
+- `torch.Size` 对象是不可变的，类似于元组。
+- 你可以通过索引来访问 `torch.Size` 对象中的特定维度的大小，例如 `x.size(0)` 返回第一维的大小。
+
+#### x.view()
+
+```python
+x = x.view(batch_size, -1) # flatten
+```
+
+当然，我可以更详细地解释 `view` 是如何处理张量形状的。让我们以你提供的网络中的这一行为例：
+
+```python
+x = x.view(batch_size, -1)
+```
+
+**例子背景**
+
+假设在前向传播过程中，经过卷积和池化层之后，`x` 的形状是 `(batch_size, channels, height, width)`。例如，如果我们有一个批处理大小为 32 的输入，并且经过两层卷积和池化之后，`x` 的形状变成了 `(32, 20, 4, 4)`。
+
+- `batch_size`：32
+- `channels`：20
+- `height`：4
+- `width`：4
+
+**使用 `view` 展平张量**
+
+`view` 方法用于改变张量的形状。在这个例子中，我们想要将多维张量展平成二维张量，以便将其传递给全连接层（线性层）。具体来说，我们需要将 `(batch_size, channels, height, width)` 形状转换为 `(batch_size, features)` 形状，其中 `features` 是所有通道、高度和宽度的乘积。
+
+**计算特征数**
+
+首先，计算出总的特征数：
+- 总的特征数 = `channels * height * width`
+- 在这个例子中，`features` = `20 * 4 * 4` = `320`
+
+因此，我们希望将 `(32, 20, 4, 4)` 形状的张量展平为 `(32, 320)` 形状的张量。
+
+**使用 `view` 和 `-1`**
+
+```python
+x = x.view(batch_size, -1)
+```
+
+这里：
+
+- `batch_size` 是第一个维度，即样本数量。
+- `-1` 表示自动推断第二个维度的大小。PyTorch 会根据总元素数量来计算 `-1` 应该代表的值，使得展平后的张量总元素数量与原张量相同。
+
+具体步骤如下：
+
+1. **获取当前张量的形状**：
+   ```python
+   current_shape = x.size()
+   # 假设 current_shape 为 (32, 20, 4, 4)
+   ```
+
+2. **计算总的特征数**：
+   ```python
+   total_features = current_shape[1] * current_shape[2] * current_shape[3]
+   # total_features = 20 * 4 * 4 = 320
+   ```
+
+3. **使用 `view` 改变形状**：
+   ```python
+   x = x.view(32, 320)
+   # 或者使用 -1 来自动推断第二个维度
+   x = x.view(32, -1)
+   ```
+
+通过这种方式，`x` 从原来的 `(32, 20, 4, 4)` 形状被展平为 `(32, 320)` 形状，这样就可以作为全连接层的输入了。
+
+**为什么使用 `-1`？**
+
+使用 `-1` 的好处在于，你不需要手动计算第二维度的大小。无论原始张量的 `channels`、`height` 和 `width` 如何变化，只要总元素数量保持不变，`-1` 都能正确地推断出新的维度大小。这使得代码更加简洁和灵活，特别是在处理不同大小的输入时。
+
+#### `self.pooling = torch.nn.MaxPool2d(2)`
+
+在 PyTorch 中使用 `torch.nn.MaxPool2d(2)` 时，如果没有特别指定 `stride` 和 `padding`，它们会使用默认值：
+
+- **kernel_size=2**：池化窗口的大小为 \(2 \times 2\)。
+- **stride=None**：默认情况下，`stride` 会等于 `kernel_size`，即步幅为 2。这意味着窗口每次移动 2 个像素。
+- **padding=0**：默认情况下，`padding` 为 0，即没有对输入特征图进行填充。
+
+所以，代码 `self.pooling = torch.nn.MaxPool2d(2)` 等效于：
+```python
+self.pooling = torch.nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
+```
+
+这意味着输出的特征图的尺寸大约会是输入尺寸的一半（如果输入尺寸可以被 2 整除）。
+
 ## 如何利用GPU进行训练
 
 ```python
@@ -2517,6 +2671,923 @@ def test():
 训练过程我们可以看到GPU被干满了！
 
 ![image-20241016215330915](./assets/image-20241016215330915.png)
+
+## 卷积网络中图像尺寸的处理
+
+### 池化层
+
+在卷积神经网络中，`padding` 是指在输入图像的边缘添加额外的像素层。这可以用来控制输出图像的尺寸，并确保图像的重要特征不会因为边界效应而丢失。对于最大池化层（MaxPool2d）来说，虽然它不像卷积层那样需要保持空间维度，但在某些情况下，你可能仍然希望使用 padding 来调整输出尺寸。
+
+当使用 `padding` 时，对输出尺寸的影响可以通过修改上述提到的公式来体现：
+$$
+{输出尺寸} = \frac{\text{输入尺寸} + 2 \times \text{padding} - \text{核大小}}{\text{步长}} + 1
+$$
+这里，`padding` 是添加到输入图像每一边的像素数。如果我们在上面的例子中引入 `padding`，那么输出尺寸会相应地改变。**核大小指的是池化层的核大小，不是卷积核。**
+
+例如，假设我们有一个7x7的输入图像，并且我们想应用一个2x2的最大池化层（MaxPool2d(2)），同时设置 `padding=1` 和 `stride=2`：
+
+- 输入宽度/高度：7
+- 核大小：2
+- 步长：2
+- padding：1
+
+代入公式计算输出尺寸：
+$$
+{输出宽度/高度} = \frac{7 + 2 \times 1 - 2}{2} + 1 = \frac{7 + 2 - 2}{2} + 1 = \frac{7}{2} + 1 = 3.5 + 1 = 4.5
+$$
+向下取整后，输出尺寸将是4x4。
+
+因此，通过增加 `padding`，你可以让输出尺寸变得更大。这对于保持网络结构的一致性或避免信息丢失可能是有用的。需要注意的是，`padding` 的值通常是根据实际需求和网络设计来确定的。
+
+**Pytorch中的`ceil_mode`参数：**
+
+在卷积神经网络中，`ceil_mode` 是一个参数，它决定了池化层（如最大池化）在计算输出尺寸时如何处理非整数的结果。默认情况下，大多数深度学习框架会向下取整，即舍去小数部分。但是当 `ceil_mode=True` 时，系统将向上取整，这意味着即使有小数部分存在，也会被算作额外的一个像素。
+
+对于你的例子，一张7x7大小的图片经过一个核大小为2x2的最大池化层（MaxPool2d(2)），使用默认设置（`ceil_mode=False`）：
+$$
+{输出宽度/高度} = \left\lfloor \frac{7 - 2}{2} + 1 \right\rfloor = \left\lfloor 3.5 \right\rfloor = 3
+$$
+所以输出尺寸是3x3。
+
+如果设置了 `ceil_mode=True`：
+$$
+{输出宽度/高度} = \left\lceil \frac{7 - 2}{2} + 1 \right\rceil = \left\lceil 3.5 \right\rceil = 4
+$$
+在这种情况下，输出尺寸将是4x4。这意味着即使实际计算结果是3.5，因为向上取整了，所以最终的输出尺寸会是4x4，而不是通常的向下取整得到的3x3。
+
+需要注意的是，当使用 `ceil_mode=True` 且输入尺寸不能被池化窗口整除时，最后一行或最后一列可能只包含部分数据点，这可能会导致边缘处理上的细微差异。
+
+### 池化层中如何使得输入输出的图像大小一致？
+
+**平均池化层**（Average Pooling Layer）与最大池化层类似，但它的原理是对池化窗口内的所有像素取平均值，而不是取最大值。这样做的效果是平滑图像，减少噪声，而不会像最大池化那样强调局部最大值。
+
+### 原理：
+- **池化窗口**（kernel size）：池化窗口覆盖输入的局部区域，常见大小为 \(2 \times 2\) 或 \(3 \times 3\)。
+- **步幅（stride）**：决定池化窗口移动的步幅，每次移动多少个像素。
+- **输出**：在池化窗口覆盖的区域内，计算所有像素的平均值作为输出。
+
+### 如何设置 `padding` 和 `stride` 使输入和输出图像的大小保持一致：
+为了确保输入图像和输出图像的大小保持一致，需要通过合理设置池化窗口的 `padding` 和 `stride` 来实现。一般情况下，可以通过以下方式实现：
+
+1. **池化窗口大小**：选择合适的池化窗口（`kernel_size`），通常是 \(2 \times 2\) 或 \(3 \times 3\)。
+
+2. **步幅（stride）**：将 `stride` 设置为 1，这样池化窗口每次只移动一个像素，保证不会过度压缩图像。
+
+3. **填充（padding）**：通过设置 `padding`，在输入图像的边缘填充一些像素，以保持输出的尺寸与输入一致。填充的大小由以下公式确定：
+   $$
+   \text{Padding} = \frac{(K - 1)}{2}
+   $$
+
+其中，\( K \) 是池化窗口的大小。如果 `kernel_size` 为偶数时，通常可以向输入的边缘非对称填充，确保尺寸一致。
+
+**举例：**
+
+假设池化窗口大小为 \(3 \times 3\) 且 `stride=1`，那么 `padding` 应该设置为：
+$$
+\text{Padding} = \frac{(3 - 1)}{2} = 1
+$$
+这样：
+- 输入和输出的图像尺寸将保持一致。
+- 每次池化窗口移动时，输入图像的每个像素都会被平滑处理。
+
+在 PyTorch 中，可以这样定义一个平均池化层：
+
+```python
+self.pooling = torch.nn.AvgPool2d(kernel_size=3, stride=1, padding=1)
+```
+
+这样，输入和输出的图像尺寸将保持不变。
+
+## 卷积网络的模块化设计
+
+### Inception Module设计
+
+这是GoogleNet：
+
+![image-20241020150038480](./assets/image-20241020150038480.png)
+
+网络中有很多重复出现的部分，我们将这部分成为Inception Module，具体的结构如下图所示：
+
+<img src="./assets/image-20241020150151664.png" alt="image-20241020150151664" style="zoom: 67%;" />
+
+这里面提到了一个1×1的卷积核，其实就是一个数字乘图像中的所有元素。
+
+原理如下所示：
+
+![image-20241020151014101](./assets/image-20241020151014101.png)
+
+1×1的卷积核不改变图像的尺寸，只改变通道数。
+
+**为什么要引入1×1的卷积核？**
+
+![image-20241020152558118](./assets/image-20241020152558118.png)
+
+上图，如果直接将一个192通道的28×28的图像卷积成32通道的28×28的（肯定是padding=2，要不然就是26×26）。对于卷积核单个运算就要5^2^次计算，然后最后的图像大小不变，要28^2^次运算，有192个通道，卷积核也是32通道的，最后的运算量达到了120,422,400次运算。假如1×1的卷积核，虽然网络变复杂了，但是总体的运算量变小了。
+
+> 为什么不用1×1的卷积核直接将192缩放到32？
+>
+> 这样会使图像严重失真。
+
+模型设计的代码如下：
+
+![image-20241020162619474](./assets/image-20241020162619474.png)
+
+
+
+最后每一条支流得到一个某些通道下的尺寸的图片 
+
+<img src="./assets/image-20241020162725354.png" alt="image-20241020162725354" style="zoom:67%;" />
+
+支流进行汇合`Concatenate`
+
+![image-20241020162930573](./assets/image-20241020162930573.png)
+
+`Concatenate`部分的代码如下所示：
+
+![image-20241020163000206](./assets/image-20241020163000206.png)
+
+```python
+#!/usr/bin/env python
+# -*- coding: UTF-8 -*-
+'''
+@File      ：GoogleNet_Module.py
+@IDE       ：PyCharm 
+@Author    ：lml
+@Date      ：2024/10/20 16:19 
+@Descriable：设计实现一个GoogleNet的模块，并使用这个模块设计一个卷积网络
+'''
+from matplotlib import pyplot as plt
+from torch import nn
+import torch
+from torchvision import transforms # 对图像进行原始处理的工具
+from torchvision import datasets
+from torch.utils.data import DataLoader
+import torch.nn.functional as F
+import torch.optim as optim
+
+# 这是一个Inception Module的模型
+class InceptionA(nn.Module):
+    def __init__(self, in_channels):
+        super(InceptionA, self).__init__()
+        self.branch1x1 = nn.Conv2d(in_channels, 16, kernel_size=1)
+
+        self.branch5x5_1 = nn.Conv2d(in_channels,16, kernel_size=1)
+        self.branch5x5_2 = nn.Conv2d(16, 24, kernel_size=5, padding=2)
+
+        self.branch3x3_1 = nn.Conv2d(in_channels, 16, kernel_size=1)
+        self.branch3x3_2 = nn.Conv2d(16, 24, kernel_size=3, padding=1)
+        self.branch3x3_3 = nn.Conv2d(24, 24, kernel_size=3, padding=1)
+
+        self.branch_pool = nn.Conv2d(in_channels, 24, kernel_size=1)
+    def forward(self, x):
+        branch1x1 = self.branch1x1(x)
+
+        branch5x5 = self.branch5x5_1(x)
+        branch5x5 = self.branch5x5_2(branch5x5)
+
+        branch3x3 = self.branch3x3_1(x)
+        branch3x3 = self.branch3x3_2(branch3x3)
+        branch3x3 = self.branch3x3_3(branch3x3)
+
+        branch_pool = F.avg_pool2d(x, kernel_size=3, stride=1, padding=1)
+        branch_pool = self.branch_pool(branch_pool)
+
+        outputs = [branch1x1, branch5x5, branch3x3, branch_pool]
+        return torch.cat(outputs, dim=1) # 最后输出的通道数就是24+16+24+24=88
+
+class Net(nn.Module):
+    def __init__(self):
+        super(Net, self).__init__()
+        self.conv1 = nn.Conv2d(1, 10, kernel_size=5)
+        self.conv2 = nn.Conv2d(88, 20, kernel_size=5)
+
+        self.incep1 = InceptionA(in_channels=10)
+        self.incep2 = InceptionA(in_channels=20)
+
+        self.mp = nn.MaxPool2d(2)
+
+        # 这个传入全连接的数字在实际开发的时候，可以先传入一个随机的数字，然后根据编译器报错的信息进行修改
+        # 或者说将全连接的部分去掉，然后最后打印出来卷积之后的size大小
+        self.fc = nn.Linear(1408, 10)
+    def forward(self, x):
+        in_size = x.size(0)
+        x = F.relu(self.mp(self.conv1(x)))
+        x = self.incep1(x)
+        x = F.relu(self.mp(self.conv2(x)))
+        x = self.incep2(x)
+        x = x.view(in_size, -1)
+        x = self.fc(x)
+        return x
+
+batch_size = 64
+transform = transforms.Compose([
+    transforms.ToTensor(), # 对于输入的图像，先转换成Pytorch中的张量，然后像素的取值变成0-1
+    transforms.Normalize((0.1307, ), (0.3081, )) # 0.1307就是MNIST数据集的均值，0.3081是数据集的标准差，这个是计算的整个数据集
+])
+train_dataset = datasets.MNIST(root='./dataset/mnist/',
+                           train=True,
+                           download=True,
+                           transform=transform # 数据集中的样本都会做上面定义的transform的一系列操作
+                           )
+train_loader = DataLoader(train_dataset,
+                          shuffle=True,
+                          batch_size=batch_size
+                          )
+test_dataset = datasets.MNIST(root='./dataset/mnist/',
+                              train=False,
+                              download=True,
+                              transform=transform
+                              )
+test_loader = DataLoader(test_dataset,
+                         shuffle=False, # 在测试集里我们就不需要随机打乱顺序，只需要按照数据集顺序测试即可
+                         batch_size=batch_size
+                         )
+
+model = Net()
+# 使用GPU进行运算
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+model.to(device)
+
+criterion = torch.nn.CrossEntropyLoss()
+optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.5)
+
+def train(epoch): # 将一轮训练封装成一个函数
+    running_loss = 0.0
+    for batch_idx, data in enumerate(train_loader, 0):
+        inputs, target = data
+        # 在训练的时候，将数据迁移到GPU上 注意模型和数据要在同一张显卡上
+        inputs, target = inputs.to(device), target.to(device)
+        optimizer.zero_grad() # 优化器优化之前先进行清零
+
+        # forward+bachward+update一起
+        outputs = model(inputs)
+        loss = criterion(outputs, target)
+        loss.backward()
+        optimizer.step()
+
+        running_loss += loss.item() # 计算累计的loss值
+
+        if batch_idx % 300 == 299: # 设置每300轮打印一下损失
+            print('[%d, %5d] loss: %.3f' % (epoch + 1, batch_idx + 1, running_loss / 300))
+            running_loss = 0.0
+
+def test():
+    correct = 0
+    total = 0
+    with torch.no_grad(): # test部分只需要计算前向传播，不需要计算反向传播，使用这一句就说明这一段代码里不计算梯度，不生成计算图
+        for data in test_loader:
+            images, labels = data
+            images, labels = images.to(device), labels.to(device)
+            outputs = model(images)
+
+            _, predicted = torch.max(outputs.data, dim = 1)
+            total += labels.size(0) # 最后得到的标签分类是一个N×1的向量，size()得到的是一个元组(N, 1),size(0)就是N，而这个N就是每个batch_size
+            correct += (predicted==labels).sum().item() # 拿预测的分类与标签分类相对比，真就是1，假就是0，取预测成功的数量
+        print('Accuracy on test set: %d %%' %(100 * correct / total)) # 待所有的测试样本测试接受之后，就计算最后的正确率
+    return 100 * correct / total
+
+if __name__ == '__main__':
+    accuracy_list = []
+    epoch_list = []
+    for epoch in range(10):
+        epoch_list.append(epoch + 1)
+        train(epoch)
+        accuracy_list.append(test())
+    plt.plot(epoch_list, accuracy_list)
+    plt.ylabel('Accuracy')
+    plt.xlabel('Epoch')
+    plt.show()
+```
+
+```python
+[1,   300] loss: 0.878
+[1,   600] loss: 0.220
+[1,   900] loss: 0.160
+Accuracy on test set: 96 %
+[2,   300] loss: 0.126
+[2,   600] loss: 0.105
+[2,   900] loss: 0.095
+Accuracy on test set: 97 %
+[3,   300] loss: 0.087
+[3,   600] loss: 0.078
+[3,   900] loss: 0.073
+Accuracy on test set: 98 %
+[4,   300] loss: 0.068
+[4,   600] loss: 0.067
+[4,   900] loss: 0.066
+Accuracy on test set: 98 %
+[5,   300] loss: 0.054
+[5,   600] loss: 0.060
+[5,   900] loss: 0.056
+Accuracy on test set: 98 %
+[6,   300] loss: 0.048
+[6,   600] loss: 0.052
+[6,   900] loss: 0.052
+Accuracy on test set: 98 %
+[7,   300] loss: 0.047
+[7,   600] loss: 0.049
+[7,   900] loss: 0.044
+Accuracy on test set: 98 %
+[8,   300] loss: 0.046
+[8,   600] loss: 0.041
+[8,   900] loss: 0.041
+Accuracy on test set: 98 %
+[9,   300] loss: 0.040
+[9,   600] loss: 0.038
+[9,   900] loss: 0.041
+Accuracy on test set: 98 %
+[10,   300] loss: 0.036
+[10,   600] loss: 0.034
+[10,   900] loss: 0.038
+Accuracy on test set: 98 %
+```
+
+<img src="./assets/image-20241020171635482.png" alt="image-20241020171635482" style="zoom: 67%;" />
+
+其实并不是训练越多轮越好。
+
+### 残差设计
+
+#### 神经网络中的梯度消失问题
+
+在刚开始我们就讲到了神经网路对梯度进行更新的时候是采用链式法则进行乘处理，如果在链式法则当中一直乘一个小于1的数，最后计算得到损失函数对参数的梯度的时候，得到的可能就是一个0，那我们使用梯度下降公式：
+$$
+\omega=\omega-\alpha \frac{\partial \cos t}{\partial \omega}
+$$
+进行更新的时候，参数就不再进行更新，此后无论怎么继续做训练，参数的值不在发生变化，那么我们后续做的这些训练都是白费的。
+
+残差可以解决梯度消失问题，背后的数学原理是什么呢？
+
+![image-20241020173455365](./assets/image-20241020173455365.png)
+
+采用残差连接（Residual Connections）来解决神经网络中的梯度消失问题的背后数学原理主要体现在以下几个方面：
+
+残差连接通过引入捷径（shortcut）连接，允许网络学习输入与输出之间的差异，而不是直接学习输入到输出的映射。这种方式可以被表示为：
+
+$$
+y = F(x) + x
+$$
+其中：
+
+- \($y$\) 是最终的输出。
+- \($F(x)$\) 是学习的残差部分，表示网络学习到的映射。
+- \($x$\) 是输入。
+
+通过这种方式，网络实际上学习的是输入 \($x$\) 和输出 \($y$\) 之间的残差（即差异）。
+
+残差连接的引入使得梯度可以更容易地通过网络向后传播。具体来说，考虑以下链式法则的梯度传播：
+$$
+\frac{\partial L}{\partial x} = \frac{\partial L}{\partial y} \cdot \frac{\partial y}{\partial F(x)} + \frac{\partial L}{\partial y} \cdot \frac{\partial y}{\partial x}
+$$
+在有残差连接的情况下，\($\frac{\partial y}{\partial x} = 1$\)，因此即使 \($F(x)$\) 的梯度较小，输入 \(x\) 仍然会通过直接连接接收到梯度，帮助缓解梯度消失的问题。
+
+![image-20241020201941294](./assets/image-20241020201941294.png)
+
+这里只需要修改模型设计部分的代码，其余代码和Inception Module实现相同
+
+```python
+class ResidualBlock(nn.Module):
+    def __init__(self, channels):
+        super(ResidualBlock, self).__init__()
+        self.channels = channels
+        self.conv1 = nn.Conv2d(channels, channels,
+        kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(channels, channels,
+        kernel_size=3, padding=1)
+    def forward(self, x):
+        y = F.relu(self.conv1(x))
+        y = self.conv2(y)
+        return F.relu(x + y) # 最后一步的残差连接
+
+class Net(nn.Module):
+    def __init__(self):
+        super(Net, self).__init__()
+        self.conv1 = nn.Conv2d(1, 16, kernel_size=5)
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=5)
+        self.mp = nn.MaxPool2d(2)
+        self.rblock1 = ResidualBlock(16)
+        self.rblock2 = ResidualBlock(32)
+        self.fc = nn.Linear(512, 10)
+    def forward(self, x):
+        in_size = x.size(0)
+        x = self.mp(F.relu(self.conv1(x)))
+        x = self.rblock1(x)
+        x = self.mp(F.relu(self.conv2(x)))
+        x = self.rblock2(x)
+        x = x.view(in_size, -1)
+        x = self.fc(x)
+        return x
+```
+
+```python
+[1,   300] loss: 0.473
+[1,   600] loss: 0.148
+[1,   900] loss: 0.116
+Accuracy on test set: 97 %
+[2,   300] loss: 0.090
+[2,   600] loss: 0.079
+[2,   900] loss: 0.072
+Accuracy on test set: 98 %
+[3,   300] loss: 0.063
+[3,   600] loss: 0.053
+[3,   900] loss: 0.061
+Accuracy on test set: 98 %
+[4,   300] loss: 0.047
+[4,   600] loss: 0.045
+[4,   900] loss: 0.051
+Accuracy on test set: 98 %
+[5,   300] loss: 0.042
+[5,   600] loss: 0.040
+[5,   900] loss: 0.044
+Accuracy on test set: 98 %
+[6,   300] loss: 0.036
+[6,   600] loss: 0.037
+[6,   900] loss: 0.034
+Accuracy on test set: 99 %
+[7,   300] loss: 0.032
+[7,   600] loss: 0.032
+[7,   900] loss: 0.033
+Accuracy on test set: 99 %
+[8,   300] loss: 0.027
+[8,   600] loss: 0.030
+[8,   900] loss: 0.030
+Accuracy on test set: 99 %
+[9,   300] loss: 0.022
+[9,   600] loss: 0.027
+[9,   900] loss: 0.029
+Accuracy on test set: 99 %
+[10,   300] loss: 0.023
+[10,   600] loss: 0.023
+[10,   900] loss: 0.023
+Accuracy on test set: 98 %
+```
+
+<img src="./assets/image-20241020202015105.png" alt="image-20241020202015105" style="zoom:67%;" />
+
+我们发现模型的准确率达到了99%。
+
+# 循环神经网络
+
+一个卷积神经网络输入128个通道，输出64个通道，使用5×5的卷积计算，这一层的参数量达到了25×2^13^=大概20w参数；**卷积层只和输入输出的通道以及卷积核大小有关**。
+
+**全连接层要和变换的数据大小有关**，加入一个256×256的图像，那么像素的数量就打到了4096个，变换一次得到1024维，那么这一层的全连接的参数数量达到了4096×1024=420w左右。
+
+为什么CNN的权重数量较少，因为对某一个通道做卷积，整个图像都是贡献这一个卷积，所以权重数量就少。（即权重共享）
+
+**处理具有序列特性的数据，采用RNN**
+
+![image-20241023204109713](./assets/image-20241023204109713.png)
+
+每一个输入都要基于前一个输入。在自然语言处理当中，比如说：“我爱河海大学”。“爱”就要在“我”的后面，“河海大学”就要在“爱”的后面。
+
+## 什么是RNN呢？
+
+![QQ_1729690750244](./assets/QQ_1729690750244.png)
+
+![image-20241023215205248](./assets/image-20241023215205248.png)
+
+最后的激活函数普遍采用tanh函数。
+
+其实最后对$h_{t-1}$和$x_t$的变换就是这样的一个变换：
+$$
+W_1 h_{t-1}+W_2X{t} = \begin{bmatrix}
+  W_1&W_2
+\end{bmatrix}_{hiddensize\times (hiddensize + inputsize)}
+\begin{bmatrix}
+ h_{t-1}\\
+ x_{t}
+\end{bmatrix}_{(hiddensize + inputsize)\times 1}
+$$
+## Pytorch中实现RNN的两种方式
+
+### RNNCell
+
+![image-20241023220720116](./assets/image-20241023220720116.png)
+
+在Pytorch中，我们可以**直接使用类`RNNCell`去实例化：**
+
+```python
+cell = torch.nn.RNNCell(input_size=input_size, hidden_size=hidden_size)
+```
+
+![image-20241023220443742](./assets/image-20241023220443742.png)
+
+batch就是批次的大小。
+
+**seq_len在batch_size前面的原因就是因为训练的时候，拿出来的是t时刻，batch_size大小的一组张量，然后训练seq_len长度次，就代表这个cell训练完了。**
+
+```python
+import torch
+batch_size = 1
+seq_len = 3
+input_size = 4
+hidden_size = 2
+
+cell = torch.nn.RNNCell(input_size = input_size, hidden_size = hidden_size)
+
+dataset = torch.randn(seq_len, batch_size, input_size)
+hidden = torch.zeros(batch_size, hidden_size) # 初始化h0 全部置为0
+
+for idx, input in enumerate(dataset, 0):
+    print('=' * 20, idx, '=' * 20)
+    print('input-size: ', input.shape)
+
+    hidden = cell(input, hidden)
+
+    print('output-size: ', hidden.shape)
+    print(hidden)
+```
+
+```python
+==================== 0 ====================
+input-size:  torch.Size([1, 4])
+output-size:  torch.Size([1, 2])
+tensor([[-0.8005, -0.8276]], grad_fn=<TanhBackward0>)
+==================== 1 ====================
+input-size:  torch.Size([1, 4])
+output-size:  torch.Size([1, 2])
+tensor([[-0.8575, -0.6381]], grad_fn=<TanhBackward0>)
+==================== 2 ====================
+input-size:  torch.Size([1, 4])
+output-size:  torch.Size([1, 2])
+tensor([[-0.0496, -0.6631]], grad_fn=<TanhBackward0>)
+```
+
+### RNN
+
+![QQ_1729696617061](./assets/QQ_1729696617061.png)
+
+**也可以使用`RNN`去实例化。**
+
+```python
+cell = torch.nn.RNN(input_size=input_size, hidden_size=hidden_size,num_layers=num_layers)
+out, hidden = cell(inputs, hidden)
+```
+
+这里有点特殊的就是`num_layers`，值得就是RNN的层数：
+
+![QQ_1729695220167](./assets/QQ_1729695220167.png)
+
+这张图应该更加容易理解：
+
+![QQ_1729695894864](./assets/QQ_1729695894864.png)
+
+最上面的h1、h2等如果写成output如o1、o2等会更好理解，因为最上面已经不作为下一层的输入所以不算是隐藏层的h了，网络训练好的东西都存在了h1n等里面，而输出则是最上面的h1(o1)等里面。**权重不一样，但是，权重的维度一样**。
+
+![QQ_1729695286006](./assets/QQ_1729695286006.png)
+
+![QQ_1729695442082](./assets/QQ_1729695442082.png)
+
+```python
+import torch
+
+batch_size = 1
+seq_len = 3
+input_size = 4
+hidden_size = 2
+num_layers = 1
+
+cell = torch.nn.RNN(input_size = input_size, hidden_size= hidden_size, num_layers = num_layers)
+
+inputs = torch.randn(seq_len, batch_size, input_size)
+hidden = torch.zeros(num_layers, batch_size, hidden_size)
+
+out, hidden = cell(inputs, hidden) # 这里就不需要我们在写循环了，库里已经写好了。 
+
+print('Output size:', out.shape)
+print('Output:', out)
+print('Hidden size: ', hidden.shape)
+print('Hidden: ', hidden)
+```
+
+```python
+Output size: torch.Size([3, 1, 2])
+Output: tensor([[[ 0.6437, -0.7838]],
+
+        [[ 0.8489, -0.8337]],
+
+        [[ 0.5057, -0.9436]]], grad_fn=<StackBackward0>)
+Hidden size:  torch.Size([1, 1, 2])
+Hidden:  tensor([[[ 0.5057, -0.9436]]], grad_fn=<StackBackward0>)
+```
+
+**注意**
+
+`RNN()`里面有一个参数为`batch_first`， 使用这个参数，我们就需要对维度进行变换：
+
+```python
+cell = torch.nn.RNN(input_size=input_size, hidden_size=hidden_size,
+num_layers=num_layers, batch_first=True)
+```
+
+<img src="./assets/QQ_1729696856690.png" alt="QQ_1729696856690" style="zoom: 67%;" />
+
+在刚才的代码里我们就需要做如下的修改：
+
+```python
+import torch
+
+batch_size = 1
+seq_len = 3
+input_size = 4
+hidden_size = 2
+num_layers = 1
+
+cell = torch.nn.RNN(input_size = input_size, hidden_size= hidden_size, num_layers = num_layers, batch_first=True)
+
+inputs = torch.randn(batch_size, seq_len, input_size)
+hidden = torch.zeros(num_layers, batch_size, hidden_size)
+
+out, hidden = cell(inputs, hidden) # 这里就不需要我们在写循环了，库里已经写好了。 
+
+print('Output size:', out.shape)
+print('Output:', out)
+print('Hidden size: ', hidden.shape)
+print('Hidden: ', hidden)
+```
+
+现在我们有一个任务：
+
+<img src="./assets/QQ_1729697286606.png" alt="QQ_1729697286606" style="zoom:50%;" />
+
+首先我们要知道RNN网络里面无法输入数值，所以我们需要将字符转变成数值输入，首先想到的就是采用键值对的方式进行处理：
+
+<img src="./assets/QQ_1729697607537.png" alt="QQ_1729697607537" style="zoom:50%;" />
+
+但是如果直接使用这样的数值替代字符是有问题的，因为直观上看3要比0大的，所以存在一种数值大小的关系在里面，因此我们需要消除这种大小关系，由此**One-hot编码**就发挥作用了：
+
+![QQ_1729697825827](./assets/QQ_1729697825827.png)
+
+在向量上只有对应位置为1，其余位置为0。这样处理我们就消除了数值的大小关系。
+
+所以在这里input-size的值就为4，每一个字符对应一个向量，向量长度为4，并且输入的“hello”也是一个序列，对于“hello”而言，这就是一个样本输入，这个样本里每一个字符具有一定的序列关系。我们的任务是输出“ohlol”，同样也是一个序列，对于样本的每一个序列需要有一个对应的输出，这里可以理解为一个多分类的问题。
+
+![image-20241025132947295](./assets/image-20241025132947295.png)
+
+既然是一个多分类问题，在设计模型的时候我们就需要加入一层Softmax层，损失器采用交叉熵：
+
+![image-20241025133205992](./assets/image-20241025133205992.png)
+
+但是经过RNN Cell之后的输出的size是多少呢？----> 根据之前我们设置的任务输出的字符都在设计好的one-hot编码里，因此输出的大小应该也是4。
+
+![image-20241025133405271](./assets/image-20241025133405271.png)
+
+因此总结下来这个多分类的处理方式：
+
+![image-20241025133437966](./assets/image-20241025133437966.png)
+
+采用RNNCell：
+
+```python
+#!/usr/bin/env python
+# -*- coding: UTF-8 -*-
+'''
+@File      ：Hello_RNN.py
+@IDE       ：PyCharm 
+@Author    ：lml
+@Date      ：2024/10/25 13:35 
+@Descriable：
+'''
+import torch
+
+input_size = 4
+hidden_size = 4
+batch_size = 1
+
+idx2char = ['e', 'h', 'l', 'o']
+x_data = [1, 0, 2, 2, 3] # 对应hello
+y_data = [3, 1, 2, 3, 2] # 对应ohlol
+
+one_hot_lookup = [[1, 0, 0, 0],
+                  [0, 1, 0, 0],
+                  [0, 0, 1, 0],
+                  [0 ,0, 0, 1]
+]
+x_one_hot = [one_hot_lookup[x] for x in x_data] # 这里的意思就是根据x_data里的值，取one_hot_lookup对应位置的序列
+
+inputs = torch.Tensor(x_one_hot).view(-1, batch_size, input_size) # 这里我们采用了x_one_hot得到的输入是一个seqlen x inputsize的大小，输入的时候应该是seqlen x batchsize x inputsize
+labels = torch.LongTensor(y_data).view(-1, 1) # labels的维度是seqlen x 1
+
+class Model(torch.nn.Module):
+    def __init__(self, input_size, hidden_size, batch_size):
+        super(Model, self).__init__()
+        self.batch_size = batch_size
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.rnncell = torch.nn.RNNCell(input_size = self.input_size, hidden_size = self.hidden_size)
+
+    def forward(self, input, hidden):
+        hidden = self.rnncell(input, hidden)
+        return hidden
+
+    def init_hidden(self):
+        return torch.zeros(self.batch_size, self.hidden_size)
+
+net = Model(input_size, hidden_size, batch_size)
+
+criterion = torch.nn.CrossEntropyLoss()
+optimizer = torch.optim.Adam(net.parameters(), lr=0.1)
+
+for epoch in range(15):
+    loss = 0
+    optimizer.zero_grad()
+    hidden = net.init_hidden()
+    print('Predicted string: ', end='')
+    for input, label in zip(inputs, labels): # 这里的循环是用来循环一个批次的下样本的序列
+        # 这里inputs为seqlen x batchsize x inputsize labels的为seqsize x 1
+        # 进入循环的input 为 batchsize x inputsize label为 1
+        hidden = net(input, hidden)
+        loss += criterion(hidden, label) # 注意这里loss是将每一轮训练之后再反向传播计算梯度，在这个循环里每次都是计算的序列的loss，下一次循环依旧会构建计算图
+        _, idx = hidden.max(dim=1)
+        print(idx2char[idx.item()], end='')
+    loss.backward()
+    optimizer.step()
+    print(', Epoch [%d/15] loss=%.4f' % (epoch + 1, loss.item()))
+```
+
+```python
+Predicted string: lllll, Epoch [1/15] loss=6.8109
+Predicted string: lhlll, Epoch [2/15] loss=5.5860
+Predicted string: lhlll, Epoch [3/15] loss=4.6903
+Predicted string: lhlol, Epoch [4/15] loss=3.9597
+Predicted string: ohlol, Epoch [5/15] loss=3.3989
+Predicted string: ohlol, Epoch [6/15] loss=3.0492
+Predicted string: ohlol, Epoch [7/15] loss=2.8082
+Predicted string: ohlol, Epoch [8/15] loss=2.6119
+Predicted string: ohlol, Epoch [9/15] loss=2.4515
+Predicted string: ohlol, Epoch [10/15] loss=2.3202
+Predicted string: ohlol, Epoch [11/15] loss=2.2089
+Predicted string: ohlol, Epoch [12/15] loss=2.1129
+Predicted string: ohlol, Epoch [13/15] loss=2.0321
+Predicted string: ohlol, Epoch [14/15] loss=1.9675
+Predicted string: ohlol, Epoch [15/15] loss=1.9183
+```
+
+我们可以看到记过逐步训练成我们想要的样子
+
+采用RNN直接进行训练：
+
+```python
+import torch
+
+input_size = 4
+hidden_size = 4
+batch_size = 1
+seq_len = 5
+num_layers = 1
+
+idx2char = ['e', 'h', 'l', 'o']
+x_data = [1, 0, 2, 2, 3] # 对应hello
+y_data = [3, 1, 2, 3, 2] # 对应ohlol
+
+one_hot_lookup = [[1, 0, 0, 0],
+                  [0, 1, 0, 0],
+                  [0, 0, 1, 0],
+                  [0 ,0, 0, 1]
+]
+x_one_hot = [one_hot_lookup[x] for x in x_data]
+
+inputs = torch.Tensor(x_one_hot).view(seq_len, batch_size, input_size)
+labels = torch.LongTensor(y_data) #
+
+class Model(torch.nn.Module):
+    def __init__(self, input_size, hidden_size, batch_size, num_layers=1):
+        super(Model, self).__init__()
+        self.num_layers = num_layers
+        self.batch_size = batch_size
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.rnn = torch.nn.RNN(input_size = self.input_size,
+                                hidden_size = self.hidden_size,
+                                num_layers = self.num_layers
+                                )
+
+    def forward(self, input):
+        hidden = torch.zeros(self.num_layers, #
+                             self.batch_size,
+                             self.hidden_size)
+        out, _ = self.rnn(input, hidden)
+        return out.view(-1, self.hidden_size) # 最后的输出应该是(𝒔𝒆𝒒𝑳𝒆𝒏 × 𝒃𝒂𝒕𝒄𝒉𝑺𝒊𝒛𝒆, 𝒉𝒊𝒅𝒅𝒆𝒏𝑺𝒊𝒛e)
+
+net = Model(input_size, hidden_size, batch_size, num_layers)
+
+criterion = torch.nn.CrossEntropyLoss()
+optimizer = torch.optim.Adam(net.parameters(), lr=0.05)
+
+for epoch in range(15):
+    optimizer.zero_grad()
+    outputs = net(inputs)
+    loss = criterion(outputs, labels)
+    loss.backward()
+    optimizer.step()
+    _, idx = outputs.max(dim=1)
+    idx = idx.data.numpy()
+    print('Predicted: ', ''.join([idx2char[x] for x in idx]), end='')
+    print(', Epoch [%d/15] loss = %.3f' % (epoch + 1, loss.item()))
+```
+
+```python
+Predicted:  hlhhh, Epoch [1/15] loss = 1.355
+Predicted:  hlhhl, Epoch [2/15] loss = 1.239
+Predicted:  ollol, Epoch [3/15] loss = 1.154
+Predicted:  ollll, Epoch [4/15] loss = 1.090
+Predicted:  ollll, Epoch [5/15] loss = 1.041
+Predicted:  ollll, Epoch [6/15] loss = 0.999
+Predicted:  ollll, Epoch [7/15] loss = 0.958
+Predicted:  ololl, Epoch [8/15] loss = 0.918
+Predicted:  ololl, Epoch [9/15] loss = 0.880
+Predicted:  oholl, Epoch [10/15] loss = 0.845
+Predicted:  oholl, Epoch [11/15] loss = 0.813
+Predicted:  oholl, Epoch [12/15] loss = 0.782
+Predicted:  oholl, Epoch [13/15] loss = 0.752
+Predicted:  oholl, Epoch [14/15] loss = 0.722
+Predicted:  oholl, Epoch [15/15] loss = 0.695
+```
+
+## One-hot编码的缺点
+
+* 如果数据类别过大，那么产生更多的维度，比如说128的ASCII码就需要128个维度，同样在处理自然语言的时候，对词进行编码，英语中可能有几万个词，那么就需要有几万个的维度，维度太高会造成“维度诅咒”。（维度诅咒就是，你的模型太过于简单，无法真正的把数据的规律映射出来，你需要提升你的函数的弹性）
+* 维度太大，造成数据稀疏
+* 对数据是硬编码，不是学习到的 
+
+因此我们需要一个**低维、稠密、可以从数据中学习**的一种编码方式
+
+由此引入**Embedding（嵌入层）**
+
+## 什么是“维度诅咒”
+
+维度诅咒（Curse of Dimensionality）是指随着数据维度的增加，数据点在高维空间中分布得越来越稀疏的现象。这种稀疏性会导致很多基于距离或邻近度的算法（如聚类、分类、回归等）的性能急剧下降。维度诅咒是机器学习、数据挖掘和统计学中的一个重要概念，它影响了许多算法的有效性和效率。
+
+### 主要表现形式：
+
+1. **数据稀疏性**：
+   - 在高维空间中，即使数据点的数量很多，它们之间的距离也会变得很大。这意味着数据点在高维空间中分布得非常分散，很难找到彼此邻近的数据点。
+   - 这种稀疏性导致许多基于距离的算法（如K近邻算法KNN）的效果变差，因为很难找到真正的“近邻”。
+
+2. **体积膨胀**：
+   - 在高维空间中，球体的体积相对于其包裹的超立方体的体积迅速减小。这意味着在高维空间中，球体的大部分体积实际上集中在它的边界附近，而不是中心区域。
+   - 这种现象导致在高维空间中进行搜索或优化时，搜索空间变得异常庞大，增加了计算复杂度。
+
+3. **距离退化**：
+   - 在高维空间中，几乎所有的点到其他点的距离都非常接近。这意味着在高维空间中，点与点之间的距离几乎相等，无法很好地反映点之间的关系。
+   - 这种距离退化现象使得基于距离的相似性度量（如欧氏距离、曼哈顿距离等）变得不那么有效。
+
+### 影响：
+
+- **计算复杂度增加**：随着维度的增加，数据点之间的比较次数呈指数级增长，导致计算成本急剧上升。
+- **数据需求增加**：为了维持足够的密度，随着维度增加，所需的样本数量也要呈指数级增长。
+- **模型过拟合风险增加**：在高维空间中，很容易找到一个模型来完美地拟合训练数据，但这样的模型在新的数据上表现通常较差，即过拟合。
+
+### 解决策略：
+
+1. **降维**：
+   - 通过降维技术（如主成分分析PCA、t-SNE、Autoencoders等）减少数据的维度，保留主要的信息，同时去除噪声和冗余信息。
+
+2. **特征选择**：
+   - 选择最相关的特征，忽略那些对预测目标影响较小的特征，从而减少维度。
+
+3. **特征工程**：
+   - 创造新的特征或组合现有特征，以更好地捕捉数据中的模式。
+
+4. **使用适合高维数据的算法**：
+   - 选择不受维度诅咒影响的算法，如决策树、随机森林、支持向量机（SVM）等，这些算法通常对高维数据有更好的鲁棒性。
+
+通过这些策略，可以在一定程度上缓解维度诅咒带来的负面影响，从而提高机器学习模型的性能和效率。
+
+## 嵌入层
+
+嵌入层就是将稀疏的高维数据映射到稠密的低维数据。说白了就是降维！（当然其实也可以升维）
+
+<img src="./assets/image-20241025152144706.png" alt="image-20241025152144706" style="zoom:50%;" />
+
+比如根据上一个我们做的输入的维度是4，那么我们想将其变为一个5维度的，怎么处理？
+
+构造这样的一个矩阵：
+
+<img src="./assets/image-20241025152555967.png" alt="image-20241025152555967" style="zoom:50%;" />
+
+假如说输入是2（即第3个分类），那么直接输出第3行：就是输入经过升维得到的结果：
+
+<img src="./assets/image-20241025152649342.png" alt="image-20241025152649342" style="zoom:50%;" />
+
+那这一部分该怎么求导处理呢？
+
+<img src="./assets/image-20241025152905609.png" alt="image-20241025152905609" style="zoom:50%;" />
+
+我们可以将嵌入层应用在RNN中：
+![image-20241025153617031](./assets/image-20241025153617031.png)
+
+![image-20241025153845668](./assets/image-20241025153845668.png)
+
+补充：加入输入的尺寸为（seq_len, batch_size），经过嵌入层之后输出的尺寸为（seq_len, batch_size， embedding_dim）
+
+
+
+# 完成基础篇之后的学习路线
+
+![image-20241020201554848](./assets/image-20241020201554848.png)
+
+
 
 # 课程练习作业
 
@@ -2634,7 +3705,332 @@ predict (after training) 4 8.544172286987305
 
 数据集：https://www.kaggle.com/c/titanic/data
 
+这是我第一版代码：
 
+```python
+# 对数据集进行预处理
+def Pre_dataprocess1(xy):
+    # 填充数据集中Age这一列的空值,计算平均值进行填充
+    xy['Age'] = xy['Age'].fillna(xy['Age'].mean())
+    # 删除Name、Ticket和Cabin这三列数据，因为我认为这三列影响不大
+    columns_to_delete = ['Name', 'Ticket', 'Cabin']
+    xy = xy.drop(columns=columns_to_delete)
+    # 将Sex和Embarked这两列的数据
+    # Sex的Mapping：
+    mapping_sex ={
+        'male': 0,
+        'female': 1
+    }
+    # Embarked的Mapping：
+    mapping_embarked = {
+        'C': 0,
+        'Q': 1,
+        'S': 2
+    }
+    xy['Sex'] = xy['Sex'].map(mapping_sex)
+    xy['Embarked'] = xy['Embarked'].map(mapping_embarked)
+    # 注意都是血的教训：删除最后一列Embarked的空值，其实在刚开始就应该统计所有的空值
+    xy = xy.dropna()
+    return xy.to_numpy()
+
+class TitanicDataset(Dataset):
+    def __init__(self, filepath):
+        # xy = np.genfromtxt(filepath, delimiter=',', dtype=None, encoding='utf-8', missing_values='', filling_values=np.nan)
+        xy = pd.read_csv(filepath)
+        # 对读取到的原数组进行预处理
+        xy = Pre_dataprocess1(xy)
+
+        self.len = xy.shape[0]
+        self.x_data = torch.from_numpy(xy[:, 2:]).float()
+        self.y_data = torch.from_numpy(xy[:, [1]]).float()
+
+    def __getitem__(self, index):
+        return self.x_data[index], self.y_data[index]
+
+    def __len__(self):
+        return self.len
+
+class TitanicDataset_Test(Dataset):
+    def __init__(self, filepath1, filepath2):
+        xy = pd.read_csv(filepath1)
+        labels = pd.read_csv(filepath2).to_numpy()
+        # 对读取到的原数组进行预处理
+        xy = Pre_dataprocess1(xy)
+
+        self.len = xy.shape[0]
+        self.x_data = torch.from_numpy(xy[:, 1:]).float()
+        self.y_data = torch.from_numpy(labels[:, [-1]]).float()
+
+    def __getitem__(self, index):
+        return self.x_data[index], self.y_data[index]
+
+    def __len__(self):
+        return self.len
+
+class Model(torch.nn.Module):
+    def __init__(self):
+        super(Model, self).__init__()
+        self.l1 = torch.nn.Linear(7, 5)
+        self.l2 = torch.nn.Linear(5, 3)
+        self.l3 = torch.nn.Linear(3, 1)
+        self.sigmoid = torch.nn.Sigmoid()
+        self.relu = torch.nn.ReLU()
+
+    def forward(self, x):
+        # 这是第一次做，发现准确率只有60%左右，可见Figure_1.png
+        # x = self.relu(self.l1(x))
+        # x = self.relu(self.l2(x))
+        # x = self.sigmoid(self.l3(x))
+        x = self.sigmoid(self.l1(x))
+        x = self.sigmoid(self.l2(x))
+        x = self.sigmoid(self.l3(x))
+        return x
+
+batch_size = 32
+train_dataset = TitanicDataset('./dataset/train.csv')
+test_dataset = TitanicDataset_Test('./dataset/test.csv',
+                                   './dataset/gender_submission.csv')
+train_loader = DataLoader(dataset=train_dataset,
+                          batch_size=batch_size,
+                          shuffle=True,
+                          num_workers=2
+                          )
+test_loader = DataLoader(dataset=test_dataset,
+                         batch_size=batch_size,
+                         shuffle=False
+                         )
+
+model = Model()
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+model.to(device)
+
+criterion = torch.nn.BCELoss(size_average=True)
+optimizer = torch.optim.SGD(model.parameters(), lr = 0.01)
+
+def train(epoch):
+    running_loss = 0.0
+    for i, data in enumerate(train_loader, 0):
+        inputs, labels = data
+        inputs, labels = inputs.to(device), labels.to(device)
+        # 检查inputs是否含有NaN值
+        # print("inputs contains NaN:", torch.isnan(inputs).any())
+        y_pred = model(inputs)
+        # print('y_pred:', y_pred, '\nlabels:', labels)
+        loss = criterion(y_pred, labels)
+        print(epoch, i, loss.item())
+
+        optimizer.zero_grad()
+        loss.backward()
+
+        optimizer.step()
+
+        running_loss += loss.item()
+
+        if i % 300 == 299: # 设置每300轮打印一下损失
+            print('[%d, %5d] loss: %.3f' % (epoch + 1, i + 1, running_loss / 300))
+            running_loss = 0.0
+def test():
+    # 测试
+    print("开始测试……")
+    correct = 0
+    total = 0
+    # 批次
+    batch = 0
+    with torch.no_grad():
+        for data in test_loader:
+            inputs, labels = data
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)
+            outputs = (outputs > 0.5).float()
+            total += labels.size(0)
+
+            # print(f"第{batch}个批次\nlabels:{labels}\noutputs:{outputs}")
+            batch += 1
+            correct += (outputs == labels).sum().item()
+        print('Accuracy on test set: %d %%' % (100 * correct / total))
+    return 100 * correct / total
+
+if __name__ == '__main__':
+    accuracy_list = []
+    epoch_list = []
+    for epoch in range(10):
+        epoch_list.append(epoch + 1)
+        train(epoch)
+        accuracy_list.append(test())
+    plt.plot(epoch_list, accuracy_list)
+    plt.ylabel('Accuracy')
+    plt.xlabel('Epoch')
+    plt.show()
+```
+
+<img src="./assets/Figure_1.png" alt="Figure_1" style="zoom:67%;" />
+
+最终模型的表现很差，我现在在想原因。
+
+查看模型在验证集上的预测值都归为0，每次训练得到的结果基本为63%。
+
+**问题1**
+
+```python
+train_loader = DataLoader(dataset=train_dataset,
+                          batch_size=batch_size,
+                          shuffle=True,
+                          num_workers=2 
+                          )
+```
+
+在这里`num_workers`是什么意思？
+
+在这里我将值设置为2，训练的时候模型很慢，但是如果设置为0，模型训练的时候跑的很快
+
+在PyTorch的`DataLoader`中，`num_workers`参数用于指定数据加载时使用的子进程数量。这些子进程负责从磁盘读取数据、对数据进行预处理（如图像的缩放、裁剪等）以及将数据传递给主进程。增加`num_workers`的数量可以并行地执行这些任务，从而理论上可以加快数据加载速度，使得训练过程更加高效。
+
+然而，在实际使用中，`num_workers`的设置需要根据你的硬件配置和具体应用场景来调整。以下是一些可能影响性能的因素：
+
+1. **硬件限制**：如果你的计算机有多个CPU核心，那么增加`num_workers`可以提高数据加载的速度。但是，如果`num_workers`设置得过高，可能会导致系统资源（如内存和CPU）的竞争加剧，反而降低效率。
+
+2. **I/O瓶颈**：如果磁盘读写速度较慢或者网络带宽有限（例如，当你从网络上下载数据集时），增加`num_workers`可能不会带来显著的速度提升，甚至会因为增加了I/O请求而变慢。
+
+3. **数据预处理复杂度**：如果数据预处理非常耗时（比如复杂的图像变换），增加`num_workers`可以帮助加速这个过程。但如果预处理很简单，增加`num_workers`带来的好处就相对较小。
+
+4. **操作系统和Python环境**：某些操作系统或Python版本在多线程或多进程中可能存在性能问题。例如，GIL（全局解释器锁）在CPython中可能会影响多线程的效率。
+
+5. **模型训练速度**：如果模型本身的前向传播和反向传播非常快，而数据加载相对较慢，这时增加`num_workers`可以帮助平衡两者的速度。反之，如果模型计算本身就很慢，增加`num_workers`可能不会有太大帮助。
+
+在例子中，当`num_workers=2`时，模型训练很慢；但当`num_workers=0`时，训练速度却很快。这可能是由于以下几个原因造成的：
+
+- 你的机器可能只有一个或少数几个CPU核心，增加`num_workers`并不能有效利用额外的计算资源。
+- 你的数据预处理可能非常简单，不需要额外的工作进程来加速。
+- 数据集可能存储在高速SSD上，单个进程已经足够快速地读取数据。
+- 可能存在一些特定于你环境的问题，比如Python GIL的影响或者其他软件层面的瓶颈。
+
+为了找到最优的`num_workers`值，你可以尝试不同的设置，并观察哪个值能够提供最佳的数据加载与模型训练之间的平衡。通常建议从0开始逐步增加，直到发现性能不再提升为止。同时，确保你的代码没有其他潜在的瓶颈，比如过大的批量大小或过于复杂的模型结构，这些都可能导致训练缓慢。
+
+**问题2**
+
+采用随机梯度下降优化器的时候：batch_size设置为32的时候，预测值都小于0.5，只有batch_size等于1的时候，模型的准确率才能达到最高。1的时候最高，2的时候降低，3的时候继续降低，从4开始所有的预测值都小于0.5了。
+
+采用Adam优化器，模型在测试集上的准确率随着batch_size变大而变大，并且准确率比采用随机梯度下降作为优化器的时候高很多。
+
+**为什么会这样？---->玄学~玄学**
+
+修改完的代码：
+
+```python
+#!/usr/bin/env python
+# -*- coding: UTF-8 -*-
+'''
+@File      ：Titanic_Classifier_2.py
+@IDE       ：PyCharm 
+@Author    ：lml
+@Date      ：2024/10/22 21:05 
+@Descriable：
+'''
+import numpy as np
+import pandas as pd
+import torch
+from matplotlib import pyplot as plt
+from torch.utils.data import Dataset
+from torch.utils.data import DataLoader
+
+# 准备数据集
+class TitanicDataset(Dataset):
+    def __init__(self, filepath):
+        xy = pd.read_csv(filepath)
+        self.len = xy.shape[0]
+
+        # 选取相关的数据特征
+        feature = ["Pclass", "Sex", "SibSp", "Parch", "Fare"]
+
+        self.x_data = torch.from_numpy(np.array(pd.get_dummies(xy[feature]), dtype=np.float32))
+        self.y_data = torch.from_numpy(np.array(xy['Survived'])).float()
+
+    def __getitem__(self, index):
+        return self.x_data[index], self.y_data[index]
+
+    def __len__(self):
+        return self.len
+
+class Model(torch.nn.Module):
+    def __init__(self):
+        super(Model, self).__init__()
+        self.l1 = torch.nn.Linear(6, 64)
+        # self.bn1 = torch.nn.BatchNorm1d(3)
+        self.l2 = torch.nn.Linear(64, 32)
+        self.l3 = torch.nn.Linear(32, 1)
+        # self.bn2 = torch.nn.BatchNorm1d(1)
+        self.sigmoid = torch.nn.Sigmoid()
+        self.relu = torch.nn.ReLU()
+    def forward(self, x):
+        x = self.relu(self.l1(x))
+        x = self.relu(self.l2(x))
+        x = self.sigmoid(self.l3(x))
+        return x
+
+batch_size = 32
+train_dataset = TitanicDataset('./dataset/train.csv')
+train_loader = DataLoader(dataset=train_dataset,
+                          batch_size=batch_size,
+                          shuffle=True,
+                          num_workers=0
+                          )
+
+model = Model()
+
+criterion = torch.nn.BCELoss(reduction='mean')
+optimizer = torch.optim.Adam(model.parameters(), lr = 0.001)
+
+def train(epoch):
+    for i, data in enumerate(train_loader, 0):
+        inputs, labels = data
+
+        y_pred = model(inputs)
+        # 输出的y_pred是[32, 1]类型的与label的[32]冲突
+        y_pred = y_pred.squeeze(-1)
+
+        loss = criterion(y_pred, labels)
+        print(epoch, i, loss.item())
+
+        optimizer.zero_grad()
+        loss.backward()
+
+        optimizer.step()
+
+def test(x):
+    with torch.no_grad():
+        y = model(x)
+        t = (y > 0.5).float()
+        ans = []
+        for i in y:
+            if i > 0.5:
+                ans.append(1)
+            else:
+                ans.append(0)
+        # print(f"y的值为{y}\nans的值为{ans}\nt的值为{t}")
+        return ans
+
+
+if __name__ == '__main__':
+    for epoch in range(100):
+        train(epoch)
+
+    # 测试
+    test_data = pd.read_csv('./dataset/test.csv')
+    feature = ["Pclass", "Sex", "SibSp", "Parch", "Fare"]
+    output = torch.from_numpy(np.array(pd.get_dummies(test_data[feature]), dtype=np.float32))
+    y_pred = pd.DataFrame({"Survived" : test(output)})
+    labels = pd.read_csv('./dataset/gender_submission.csv')
+    print(f"y_pred为：{y_pred}\nlabels为：{labels}")
+    similarity = labels['Survived'] == y_pred['Survived']
+
+    # 统计相似的条目数
+    similar_count = similarity.sum()
+    total_count = len(similarity)
+
+    # 输出相似度
+    similarity_ratio = similar_count / total_count
+    print(f'Similarity: {similarity_ratio:.2%}')
+```
 
 
 
@@ -2646,12 +4042,119 @@ predict (after training) 4 8.544172286987305
 
 ![image-20241016214620649](./assets/image-20241016214620649.png)
 
+修改模型：
+
+```python
+'''
+卷积过程：
+padding = 1, kernel_size = 3
+输入：1x28x28
+第一个卷积层 conv1：
+kernel_size=3, padding=1
+输出形状：(batch_size, 10, 28, 28)
+第一个池化层 pooling：
+kernel_size=2, stride=2
+输出形状：(batch_size, 10, 14, 14)
+第二个卷积层 conv2：
+kernel_size=3, padding=1
+输出形状：(batch_size, 20, 14, 14)
+第二个池化层 pooling：
+kernel_size=2, stride=2
+输出形状：(batch_size, 20, 7, 7)
+第三个卷积层 conv3：
+kernel_size=3, padding=1
+输出形状：(batch_size, 30, 7, 7)
+第三个池化层 pooling：
+kernel_size=2, stride=2
+输出形状：(batch_size, 30, 3, 3)
+'''
+class Net(torch.nn.Module):
+    def __init__(self):
+        super(Net, self).__init__()
+        self.conv1 = torch.nn.Conv2d(1, 10, kernel_size=3, padding=1) # 10 x 24 x 24
+        self.conv2 = torch.nn.Conv2d(10, 20, kernel_size=3, padding=1) #
+        self.conv3 = torch.nn.Conv2d(20, 30, kernel_size=3, padding=1)
+        self.pooling = torch.nn.MaxPool2d(2)
+        self.fc1 = torch.nn.Linear(270, 130)
+        self.fc2 = torch.nn.Linear(130, 60)
+        self.fc3 = torch.nn.Linear(60, 10)
+    def forward(self, x):
+        batch_size = x.size(0)
+        x = F.relu(self.pooling(self.conv1(x)))
+        x = F.relu(self.pooling(self.conv2(x)))
+        x = F.relu(self.pooling(self.conv3(x)))
+        x = x.view(batch_size, -1) # flatten
+        x = self.fc1(x)
+        x = self.fc2(x)
+        x = self.fc3(x)
+        return x
+```
+
+总体训练效果和没有加大网络复杂度的时候差距不大
+
+```python
+[1,   300] loss: 1.588
+[1,   600] loss: 0.299
+[1,   900] loss: 0.181
+Accuracy on test set: 95 %
+[2,   300] loss: 0.125
+[2,   600] loss: 0.120
+[2,   900] loss: 0.111
+Accuracy on test set: 97 %
+[3,   300] loss: 0.092
+[3,   600] loss: 0.084
+[3,   900] loss: 0.082
+Accuracy on test set: 97 %
+[4,   300] loss: 0.068
+[4,   600] loss: 0.072
+[4,   900] loss: 0.067
+Accuracy on test set: 98 %
+[5,   300] loss: 0.056
+[5,   600] loss: 0.062
+[5,   900] loss: 0.056
+Accuracy on test set: 98 %
+[6,   300] loss: 0.051
+[6,   600] loss: 0.052
+[6,   900] loss: 0.050
+Accuracy on test set: 98 %
+[7,   300] loss: 0.044
+[7,   600] loss: 0.051
+[7,   900] loss: 0.046
+Accuracy on test set: 98 %
+[8,   300] loss: 0.044
+[8,   600] loss: 0.041
+[8,   900] loss: 0.040
+Accuracy on test set: 98 %
+[9,   300] loss: 0.037
+[9,   600] loss: 0.038
+[9,   900] loss: 0.038
+Accuracy on test set: 98 %
+[10,   300] loss: 0.034
+[10,   600] loss: 0.036
+[10,   900] loss: 0.033
+Accuracy on test set: 98 %
+```
+
 # Pytorch为什么输入是小批量的数据？
 
 1. **硬件加速**：现代深度学习通常依赖于 GPU 进行并行计算。将多个样本打包成一个小批量可以让 GPU 更高效地利用其并行计算能力，从而加快训练速度。
 2. **统计效应**：使用小批量而不是单个样本来更新权重，可以帮助减少噪声的影响，使得梯度估计更加准确和平滑。这有助于优化过程更加稳定，避免剧烈波动。
 3. **内存效率**：通过一次性处理多个样本，我们可以更好地利用内存带宽，因为加载数据到GPU上的开销相对较大。如果每次只处理一个样本，那么频繁的数据传输会成为瓶颈。
 4. **泛化性能**：小批量训练还可以帮助模型有更好的泛化能力，因为它相当于对损失函数进行了一定程度的平滑，减少了过拟合的风险。
+
+# Pytorch中损失函数构建计算图是什么意思？
+
+在PyTorch中，构建计算图的过程就是跟踪和记录计算步骤，使得可以通过**自动微分**来计算梯度，进而用于模型训练。具体来说，计算图是一个有向无环图（DAG），其中节点表示张量（如输入、输出、中间结果），而边表示张量间的操作（如加法、乘法、激活函数等）。
+
+**在损失函数构建计算图中的作用**：
+
+1. **记录操作链**：当定义损失函数并进行前向传播时，PyTorch会自动记录所有计算操作和相关的张量。
+  
+2. **自动计算梯度**：在反向传播时，PyTorch根据损失函数的计算图对每一步的操作求导，并自动计算梯度，更新模型参数。
+  
+3. **反向传播优化**：有了计算图，PyTorch可以从输出反向传播计算每层的梯度，使得优化算法可以使用这些梯度来调整参数，从而最小化损失函数。
+
+在PyTorch中，默认情况下，所有具有 `requires_grad=True` 的张量都会被包含在计算图中。
 
 # Pandas库使用教程
 
@@ -2837,6 +4340,76 @@ conda config --set show_channel_urls yes
 ```
 
 # pytorch使用
+
+## torch.Tensor和torch.LongTensor的区别
+
+在PyTorch中，`torch.Tensor` 和 `torch.LongTensor` 是两种不同类型的张量，它们主要用于存储不同类型的数据。了解这两种张量的区别对于正确地处理数据和避免运行时错误非常重要。
+
+### `torch.Tensor`
+
+`torch.Tensor` 是一个通用的张量类，它可以用来存储任何数值类型的数据。默认情况下，`torch.Tensor` 存储的是浮点数（floats），通常是 `torch.float32` 类型的数据。这意味着它适合用来表示需要进行数学运算的数据，例如在神经网络中常见的权重矩阵、输入数据等。
+
+#### 创建 `torch.Tensor`：
+```python
+import torch
+
+# 创建一个包含浮点数的张量
+tensor_float = torch.tensor([1.0, 2.0, 3.0])
+print(tensor_float)  # 输出: tensor([1., 2., 3.])
+
+# 创建一个包含整数的张量，但会被转换成浮点数
+tensor_int_as_float = torch.tensor([1, 2, 3])
+print(tensor_int_as_float)  # 输出: tensor([1., 2., 3.])
+```
+
+### `torch.LongTensor`
+
+`torch.LongTensor` 是一个专门用于存储长整型（long integers）数据的张量类。它主要用于存储索引、标签等整数值。在深度学习中，它经常用来表示类标签或索引。
+
+#### 创建 `torch.LongTensor`：
+```python
+# 创建一个包含长整型数据的张量
+tensor_long = torch.LongTensor([1, 2, 3])
+print(tensor_long)  # 输出: tensor([1, 2, 3])
+```
+
+### 区别总结
+
+1. **数据类型**：
+   - `torch.Tensor` 默认存储浮点数（`float32`）。
+   - `torch.LongTensor` 存储长整型数据（`int64`）。
+
+2. **用途**：
+   - `torch.Tensor` 适合用于存储需要进行数学运算的数据，如权重、输入等。
+   - `torch.LongTensor` 适合用于存储索引或标签等不需要进行浮点数运算的数据。
+
+3. **兼容性**：
+   - 大多数PyTorch的操作默认支持 `torch.Tensor` 类型。
+   - 对于某些操作，如索引或类标签，通常需要使用 `torch.LongTensor`。
+
+### 实际应用中的注意事项
+
+- 当你需要将一个张量用作索引时，通常需要将其转换为 `LongTensor`。
+- 在进行数学运算时，使用 `Tensor`（默认为 `FloatTensor`）可以确保数据类型的一致性。
+- 在传递张量给某些函数时，确保传递的数据类型符合函数的要求，否则可能会导致运行时错误。
+
+### 示例转换
+
+如果需要在两者之间转换，可以使用 `.to(dtype)` 方法：
+
+```python
+# 将 float 张量转换为 long 张量
+float_tensor = torch.tensor([1.0, 2.0, 3.0])
+long_tensor = float_tensor.to(torch.int64)
+print(long_tensor)  # 输出: tensor([1, 2, 3])
+
+# 将 long 张量转换为 float 张量
+long_tensor = torch.tensor([1, 2, 3], dtype=torch.int64)
+float_tensor = long_tensor.to(torch.float32)
+print(float_tensor)  # 输出: tensor([1., 2., 3.])
+```
+
+通过上述说明，你应该能够更好地理解和区分 `torch.Tensor` 和 `torch.LongTensor` 的使用场合及其转换方法。
 
 ## 下载常用数据集
 
