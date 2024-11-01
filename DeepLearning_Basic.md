@@ -1679,6 +1679,15 @@ $$
 
 这里就是对于最后一个隐藏层的输出$Z_{i}$，在Softmax的这一层里先取$e^{Z_{i}}$，然后再将这个值÷所有输出的exp的和。得到的就是对应类输出的概率值。
 
+```python
+def softmax(x):
+    """Compute softmax values for each sets of scores in x."""
+    e_x = np.exp(x - np.max(x))
+    return e_x / e_x.sum(axis=0)
+```
+
+
+
 ![image-20241011184933394](./assets/image-20241011184933394.png)
 
 **这么看这个式子是满足之前设定的条件的。**
@@ -1926,6 +1935,8 @@ $$
   loss = loss_fn(log_probs, labels)
   print(loss)  # 输入必须是log-softmax
   ```
+  
+  这里可以使用`self.softmax = torch.nn.LogSoftmax(dim=1)`，具体可见[这里](##作业四)中参考代码中对模型的设计。
 
 ### 总结
 - **CrossEntropyLoss** 是更常用的损失函数，因为它同时处理了 softmax 和损失计算，适合大多数分类任务。
@@ -2123,6 +2134,69 @@ Accuracy on test set: 97 %
 * 对于整张图像的特征提取：FFT（傅里叶变换）
 * 小波变换
 * 在深度学习里面，我们使用**CNN**！！！（The King!）
+
+## 输入的是一个tensor向量如何实现，Softmax如何实现
+
+在 PyTorch 中，可以使用内置的 `torch.nn.functional.softmax` 函数来计算 Softmax。下面是一个例子，展示如何对一个 Tensor 向量应用 Softmax 函数：
+
+```python
+import torch
+import torch.nn.functional as F
+
+# 假设这是一个输入的 Tensor 向量
+input_tensor = torch.tensor([-0.2399, 0.0624, -0.2814, -0.2795, 0.0203, 0.1193], dtype=torch.float32)
+
+# 应用 Softmax 函数
+softmax_output = F.softmax(input_tensor, dim=0)
+
+# 输出结果
+print("Softmax output:", softmax_output)
+```
+
+在这个例子中：
+
+- `input_tensor` 是一个形状为 `(6,)` 的一维 Tensor。
+- `F.softmax` 是 `torch.nn.functional` 模块下的 Softmax 函数。
+- `dim=0` 表示沿着维度 0 应用 Softmax 函数，即对一维 Tensor 的每一个元素计算 Softmax。
+
+### 多维 Tensor 的 Softmax
+
+如果输入是一个二维 Tensor，通常会沿着某一维度（通常是最后一个维度）计算 Softmax。例如：
+
+```python
+# 假设这是一个形状为 (3, 6) 的二维 Tensor
+input_tensor = torch.tensor([
+    [-0.2399, 0.0624, -0.2814, -0.2795, 0.0203, 0.1193],
+    [-0.1632, -0.0944, -0.3029, -0.3180, -0.0641, 0.0408],
+    [-0.2580, 0.0015, -0.3320, -0.4502, -0.1603, -0.0775]
+], dtype=torch.float32)
+
+# 应用 Softmax 函数
+softmax_output = F.softmax(input_tensor, dim=1)
+
+# 输出结果
+print("Softmax output:\n", softmax_output)
+```
+
+在这个例子中：
+
+- `input_tensor` 是一个形状为 `(3, 6)` 的二维 Tensor。
+- `dim=1` 表示沿着维度 1 应用 Softmax 函数，即对每行数据计算 Softmax。
+
+### 数值稳定性考虑
+
+为了提高数值稳定性，通常会先减去每行的最大值，然后再计算 Softmax。这可以通过在调用 `F.softmax` 之前手动减去最大值来实现，但 PyTorch 内部已经考虑了这一点，因此直接使用 `F.softmax` 即可。
+
+### 检查结果
+
+你可以检查 `softmax_output` 是否满足 Softmax 的性质，即所有元素都是非负的，并且每行元素之和为 1：
+
+```python
+# 检查每行元素之和是否接近 1
+print("Sum of each row:", softmax_output.sum(dim=1))
+```
+
+如果 `softmax_output.sum(dim=1)` 接近于 1，说明 Softmax 计算是正确的。如果出现负数或其他不合理的结果，请检查输入数据是否有误或是否存在其他计算错误。
 
 # 卷积神经网络
 
@@ -4032,11 +4106,336 @@ if __name__ == '__main__':
     print(f'Similarity: {similarity_ratio:.2%}')
 ```
 
-
-
 ## 作业四
 
 ![image-20241012233858449](./assets/image-20241012233858449.png)
+
+数据集地址：https://www.kaggle.com/competitions/otto-group-product-classification-challenge/overview
+
+首先这是我自己写的代码：
+
+```python
+import numpy as np
+import pandas as pd
+import torch
+from matplotlib import pyplot as plt
+from torch.utils.data import Dataset
+from torch.utils.data import DataLoader
+import torch.nn.functional as F
+import torch.optim as optim
+
+batch_size = 64
+class_target = {
+    "Class_1": 0,
+    "Class_2": 1,
+    "Class_3": 2,
+    "Class_4": 3,
+    "Class_5": 4,
+    "Class_6": 5,
+    "Class_7": 6,
+    "Class_8": 7,
+    "Class_9": 8
+}
+class OttoDataset(Dataset):
+    def __init__(self, filepath):
+        xy = pd.read_csv(filepath)
+        self.len = xy.shape[0]
+
+        feature_columns = xy.columns[1:-1] # Pandas里通过索引获得我们想要的特征列
+        self.x_data = torch.from_numpy(xy.loc[:, feature_columns].to_numpy()).float()
+        self.y_data = torch.from_numpy(np.array(xy['target'].map(class_target))).long()
+
+    def __getitem__(self, index):
+        return self.x_data[index], self.y_data[index]
+
+    def __len__(self):
+        return self.len
+
+train_dataset = OttoDataset('./datasets/train.csv')
+# 打印数据集检查数据是否清理完整
+# print(f"x_data:{train_dataset.x_data}\ny_data:{train_dataset.y_data}")
+# print(train_dataset.len)
+train_loader = DataLoader(train_dataset,
+                          shuffle=True,
+                          batch_size=batch_size)
+
+class Model(torch.nn.Module):
+    def __init__(self):
+        super(Model, self).__init__()
+        self.l1 = torch.nn.Linear(93, 50)
+        self.l2 = torch.nn.Linear(50, 20)
+        self.l3 = torch.nn.Linear(20, 9)
+
+    def forward(self, x):
+        x = F.relu(self.l1(x))
+        x = F.relu(self.l2(x))
+        x = self.l3(x)
+        return x
+def train(epoch):
+    running_loss = 0.0
+    for batch_idx, data in enumerate(train_loader, 0):
+        inputs, target = data
+        optimizer.zero_grad()
+
+        outputs = model(inputs)
+        loss = criterion(outputs, target)
+        loss.backward()
+        optimizer.step()
+
+        running_loss += loss.item()
+
+        if batch_idx % 300 == 299: # 设置每300轮打印一下损失
+            print('[%d, %5d] loss: %.3f' % (epoch + 1, batch_idx + 1, running_loss / 300))
+            running_loss = 0.0
+
+def test(x):
+    with torch.no_grad():
+        y = model(x)
+        # 进入Softmax层进行处理
+        y = F.softmax(y, dim=1)
+        # 检查每行元素之和是否接近 1
+        print("Sum of each row:", y.sum(dim=1))
+        return y
+        # _, predicted = torch.max(y.data, dim=1)
+        # ans = []
+        # for i in predicted:
+        #     ans.append(i)
+        #
+        # return ans
+
+model = Model()
+criterion = torch.nn.CrossEntropyLoss()
+optimizer = optim.Adam(model.parameters(), lr=0.01)
+
+if __name__ == '__main__':
+    # 训练模型
+    for epoch in range(100):
+        train(epoch)
+    # 保存模型
+    torch.save(model.state_dict(), 'Otto_model_state_dict.pth')
+    # 测试
+    # 加载模型
+    model_test = Model()
+    model_test.load_state_dict(torch.load('Otto_model_state_dict.pth'))
+
+    test_data = pd.read_csv('./datasets/test.csv')
+    feature_columns = test_data.columns[1:]
+    output = torch.from_numpy(test_data.loc[:, feature_columns].to_numpy()).float()
+    y_pred = test(output) # 预测的结果
+    print(f"y_pred:{y_pred}\n长度为：{y_pred.shape[0]}")
+
+    ids = torch.arange(1, y_pred.shape[0] + 1)
+
+    # 创建 DataFrame
+    df = pd.DataFrame(y_pred.numpy(), columns=class_target.keys())
+    df.insert(0, 'ID', ids.numpy())
+    df.to_csv('my_predict.csv',index=False)
+```
+
+上传到Kaggle上损失达到了：
+
+![image-20241030213613506](./assets/image-20241030213613506.png)
+
+这是参考的大佬的代码：
+最后的损失为：
+![image-20241030223417747](./assets/image-20241030223417747.png)
+
+* 拿到数据集里需要划分训练集和测试集
+* NLLLoss的处理方式
+
+```python
+from torch.utils.data import Dataset
+from torch.utils.data import DataLoader
+import numpy as np
+import pandas as pd
+import torch
+
+# train data
+file = np.loadtxt('./datasets/train.csv',
+                  delimiter=',', dtype=str)
+
+out = [] # 创建一个空列表，用于存储处理后的数据。
+
+for i in file[1:]: # 从第二行（索引为1）开始遍历file中的每一行。第一行通常包含标题，因此从第二行开始读取数据。
+    tmp = i[:] # 将当前行复制到tmp变量中
+    tmp[-1] = tmp[-1][6] # 把当前行的最后一列的第7个字符（索引为6，因为索引从0开始）提取出来作为新的最后一列的值。也就是最后的Class_1的最后数字
+    out.append([int(tmp[0])] + list(np.float32(np.array(tmp[1:])))) # 把第一列转换成整数类型，并把剩余的部分转换成浮点数，然后把这些数据作为一个列表添加到out列表中
+
+np.savetxt('./datasets/train_cl.csv', out, delimiter=',')
+
+# test data
+file = np.loadtxt('./datasets/test.csv',
+                  delimiter=',', dtype=str)
+
+out = []
+
+for i in file[1:]:
+    tmp = i[:]
+
+    out.append([int(tmp[0])] + list(np.float32(np.array(tmp[1:]))))
+
+np.savetxt('./datasets/test_cl.csv', out, delimiter=',')
+
+# prepare dataloader
+
+xy = np.loadtxt('./datasets/train_cl.csv', delimiter=',', dtype=np.float32)
+np.random.shuffle(xy)
+
+
+class OttoDataset(Dataset):
+    def __init__(self):
+        self.len = xy.shape[0]
+        self.x_data = torch.from_numpy(xy[:-2000, 1:-1]) # 最后2000行的样本不用了
+        self.y_data = torch.LongTensor((xy[:-2000, -1] - 1).tolist()) # tolist可用可不用
+
+    def __getitem__(self, index):
+        return self.x_data[index], self.y_data[index]
+
+    def __len__(self):
+        return self.len - 2000
+
+
+dataset = OttoDataset()
+train_loader = DataLoader(dataset=dataset, batch_size=32, shuffle=True, num_workers=4)
+
+class OttoDataset_test(Dataset): # 取后2000个作为测试集
+    def __init__(self):
+        self.len = xy.shape[0]
+        self.x_data = torch.from_numpy(xy[-2000:, 1:-1])
+        self.y_data = torch.LongTensor((xy[-2000:, -1] - 1).tolist())
+
+    def __getitem__(self, index):
+        return self.x_data[index], self.y_data[index]
+
+    def __len__(self):
+        return 2000
+
+
+dataset_test = OttoDataset_test()
+test_loader = DataLoader(dataset=dataset_test, batch_size=32, shuffle=False, num_workers=4)
+
+# design model
+class Model(torch.nn.Module):
+    def __init__(self):
+        super(Model, self).__init__()
+        self.linear0 = torch.nn.Linear(93, 256)
+        self.linear1 = torch.nn.Linear(256, 128)
+        self.linear2 = torch.nn.Linear(128, 64)
+        self.linear3 = torch.nn.Linear(64, 32)
+        self.linear4 = torch.nn.Linear(32, 9)
+        self.relu = torch.nn.ReLU()
+        self.softmax = torch.nn.LogSoftmax(dim=1)
+
+    def forward(self, y_pred):
+        y_pred = self.relu(self.linear0(y_pred))
+        y_pred = self.relu(self.linear1(y_pred))
+        y_pred = self.relu(self.linear2(y_pred))
+        y_pred = self.relu(self.linear3(y_pred))
+        y_pred = self.softmax(self.linear4(y_pred))
+        return y_pred
+
+
+model = Model()
+
+#  Defination of criterion and optimizer
+
+criterion = torch.nn.NLLLoss()
+optimizer = torch.optim.AdamW(model.parameters(), lr=0.00039)
+
+# Train cycle and Test function
+def train(epoch):
+    avgloss = 0.0
+    for tick, (input, target) in enumerate(train_loader, 0):
+        optimizer.zero_grad()
+
+        output = model(input)
+        # print(output,'\n',target)
+        loss = criterion(output, target)
+        loss.backward()
+        optimizer.step()
+
+        avgloss += loss.item()
+        # if tick % 100 == 99:
+        #    print('epoch = %d tick = %5d loss = %.3f' % (epoch + 1, tick + 1, avgloss / 100))
+        #    avgloss = 0.0
+    print('epoch = %4d  loss = %.3f' % (epoch + 1, avgloss / 100))
+    avgloss = 0.0
+
+
+def test():
+    with torch.no_grad():
+        for (input, output) in test_loader:
+            pred_out = model(input)
+            loss = criterion(pred_out, output)
+        print('test loss is: %.5f' % loss.item())
+
+if __name__ == '__main__':
+    for epoch in range(100):
+        train(epoch)
+        test()
+
+    test = np.loadtxt('./datasets/test_cl.csv', delimiter=',', dtype=np.float32)
+    x_test = torch.from_numpy(test[:, 1:])
+    n = torch.from_numpy(test[:, [0]])
+    y_test_pred = torch.exp(model(x_test))
+    tmp = y_test_pred.data.tolist()
+    n = n.data.tolist()
+    out = []
+    for i in range(len(tmp)):
+        add = []
+        add.append(n[i][0])
+        add = (add + tmp[i])
+        out.append(add)
+    np.savetxt('./datasets/submission.csv', out, delimiter=',',
+               fmt="%d,%.18f,%.18f,%.18f,%.18f,%.18f,%.18f,%.18f,%.18f,%.18f")
+
+    original_df = pd.read_csv('./datasets/submission.csv', header=None)
+    newdf = pd.DataFrame(np.array(
+        [['id', 'Class_1', 'Class_2', 'Class_3', 'Class_4', 'Class_5', 'Class_6', 'Class_7', 'Class_8', 'Class_9']]))
+    df = pd.concat([newdf, original_df])
+    df.to_csv('./datasets/submission.csv', header=False, index=False)
+```
+
+对于代码不理解的部分的补充：
+
+关于你的疑问，我来逐一解答：
+
+1. `y_test_pred = torch.exp(model(x_test))` 为什么使用 `exp()` 操作？
+
+在训练模型时，你使用的是 `torch.nn.LogSoftmax(dim=1)` 来计算模型的输出，因此在输出层得到了对数概率（log-probabilities）。而 `torch.exp()` 是取指数的操作，能够将对数概率还原成普通的概率。这里使用 `torch.exp()`，是为了将 `LogSoftmax` 产生的对数概率转换回实际的概率，以便于输出预测概率进行进一步分析或提交。
+
+2. `test` 中为什么还要计算 `loss`？
+
+在测试函数 `test()` 中计算 `loss`（损失值），主要目的是衡量模型在测试集上的表现。虽然测试集不参与模型参数的更新，但通过计算损失值可以观察模型的泛化能力、是否有过拟合等问题，帮助评估模型的性能。
+
+3. `header` 的作用以及 `header=None` 和 `index` 的含义
+
+在 `pd.read_csv` 和 `pd.to_csv` 中：
+
+- **`header`**：指定 CSV 文件的表头行。`header=None` 意味着 CSV 文件没有表头行，数据从第一行开始读取，且不会自动分配列名。
+- **`index`**：控制是否将 DataFrame 的索引写入 CSV 文件。`index=False` 表示不会将索引写入到 CSV 文件中，即每一行只包含数据本身，不会带上行号或索引信息。
+
+4. 代码含义分析
+
+以下代码的目的是在生成的 `submission.csv` 文件中添加标题行：
+
+```python
+original_df = pd.read_csv('/datasets/submission.csv', header=None)
+newdf = pd.DataFrame(np.array(
+    [['id', 'Class_1', 'Class_2', 'Class_3', 'Class_4', 'Class_5', 'Class_6', 'Class_7', 'Class_8', 'Class_9']]))
+df = pd.concat([newdf, original_df])
+df.to_csv('./datasets/submission.csv', header=False, index=False)
+```
+
+代码的详细步骤：
+
+1. **读取数据**：`original_df` 通过 `pd.read_csv` 读取了原始的 `submission.csv` 文件，其中 `header=None` 表示文件中没有列名，因此所有列均按默认顺序读取。
+  
+2. **创建标题行**：`newdf` 是一个包含标题行的 DataFrame，标题行定义了各列的名称（即 `id` 和各类别 `Class_1` 到 `Class_9`）。
+
+3. **合并 DataFrame**：`pd.concat([newdf, original_df])` 将 `newdf`（标题行）和 `original_df`（数据）垂直合并。
+
+4. **保存文件**：最后使用 `to_csv` 将合并后的 DataFrame 保存到 `submission.csv` 文件中，并设置 `header=False` 和 `index=False`，以避免写入重复的列名或索引。
 
 ## 作业五
 
@@ -4134,6 +4533,12 @@ Accuracy on test set: 98 %
 [10,   900] loss: 0.033
 Accuracy on test set: 98 %
 ```
+
+## 作业六
+
+![image-20241025192533805](./assets/image-20241025192533805.png)
+
+使用GRU模型训练“hello”---->"ohlol"
 
 # Pytorch为什么输入是小批量的数据？
 
