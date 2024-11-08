@@ -3655,7 +3655,180 @@ Predicted:  oholl, Epoch [15/15] loss = 0.695
 
 补充：加入输入的尺寸为（seq_len, batch_size），经过嵌入层之后输出的尺寸为（seq_len, batch_size， embedding_dim）
 
+## 双向神经网络
 
+在上面我们处理序列时，模型的设计如下所示：
+
+![image-20241104104844716](./assets/image-20241104104844716.png)
+
+我们再观察这个网络，发现X~N-1~这一列的RNN Cell的输入是前一层的隐藏层的输出与X~N-1~的组合，其实这么看数据融合的过程，X~N-1~其实就是和前面的有关，但是在现实中很多时候，序列中当前的位置不仅和前文有关，而且还和后面的序列有关，比如说自然语言处理中的上下文关系，因此，我们依葫芦画瓢，可以根据前文关系的学习方式来学习后文，即从后往前走一遍。同时，为了保持前后文都学习到，最后将前文的内容与后文的内容融合在一块，所以我们的模型设计如下所示：
+
+![image-20241104110351672](./assets/image-20241104110351672.png)
+
+最后模型输出`output, hidden`，其中$\text { hidden }=\left[h_{N}^{f}, h_{N}^{b}\right]$.
+
+## RNN应用----循环神经网络分类器
+
+有这样的一个任务，针对英文名字可以猜出找个人是哪个国家的。
+
+![image-20241103223346936](./assets/image-20241103223346936.png)
+
+针对RNN的网络：
+
+![image-20241103223725851](./assets/image-20241103223725851.png)
+
+所以对于网络我们可以不用这么设计，将其设计成这样：
+
+![image-20241103223749999](./assets/image-20241103223749999.png)
+
+![image-20241103224245076](./assets/image-20241103224245076.png)
+
+除此之外，我们还发现输入的序列长度都不一致。
+
+### 英文名国籍分类任务（属于自然语言处理的范畴）
+
+#### 数据处理
+
+首先针对输入数据，我们发现都是英文字符，因此可以采用将字符对应到ASCII中进行编码：
+
+![image-20241103225100092](./assets/image-20241103225100092.png)
+
+编码结束之后我们发现，不同样本的长度不同，这样是无法导入到张量中进行运算的。为了保持长度相等，可以以最长的样本长度为标准，短的后面补0：
+
+![image-20241103225311387](./assets/image-20241103225311387.png)
+
+对于输出的类，我们可以采用字典编码的方式：
+
+![image-20241103225820412](./assets/image-20241103225820412.png)
+
+因此对于数据集我们可以定义的类如下所示：
+
+```python
+class NameDataset(Dataset):
+    def __init__(self, is_train_set = True):
+        filename = 'datasets/names_train.csv.gz' if is_train_set else 'datasets/names_test.csv.gz'
+        with gzip,open(filename, 'rt') as f: # 可以利用csv和gzip两个包读取gz文件 针对拿到的文件类型不一样，就需要采用不同的工具进行读取
+            reader = csv.reader(f)
+            rows = list(reader)
+        self.names = [row[0] for row in rows] # 样本中的都是(name, country)，所以每行的第一个就是名字
+        self.len = len(self.names)
+        self.countries = [row[1] for row in rows] # 每一行的第二个元素就是country
+        self.country_list = list(sorted(set(self.countries))) # set就是把列表变成集合，可以去除重复的元素，因为self.countries里面很多国家会重复出现，因此需要去重，最后根据首字母排序后变为一个列表
+        self.country_dict = self.getCountryDict() # 根据函数我们可以将国家转变为一个词典
+        self.country_num = len(self.country_list)
+
+    def __getitem__(self, item):
+        return self.names[item], self.country_dict[self.countries[item]]
+
+    def __len__(self):
+        return self.len
+
+    def getCountryDict(self):
+        country_dict = dict()
+        for idx, country_name in enumerate(self.country_list, 0):
+            country_dict[country_name] = idx
+        return country_dict
+
+    def idx2country(self, index):
+        return self.country_list[index]
+
+    def getCountriesNum(self):
+        return self.country_num
+```
+
+#### 准备数据集
+
+```python
+trainset = NameDataset(is_train_set=True)
+trainloader = DataLoader(trainset,
+                         batch_size=BATCH_SIZE,
+                         shuffle=True)
+testset = NameDataset(is_train_set=False)
+testloader = DataLoader()
+
+N_COUNTRY = testset.getCountriesNum() # 决定了我们的网络最后的输出的size
+```
+
+#### 模型设计
+
+```python
+class RNNClassifier(torch.nn.Module):
+    def __init__(self, input_size, hidden_size, output_size, n_layers = 1, bidirectional = True):
+        super(RNNClassifier, self).__init__()
+        self.hidden_size = hidden_size
+        self.n_layers = n_layers
+        self.n_directions = 2 if bidirectional else 1 # 是否是单向还是双向的RNN，如果是单向，那么就是1，如果是双向，那么就是2
+
+        self.embedding = torch.nn.Embedding(input_size, hidden_size) # embedding层输入为(seqlen, batchsize), 输出为(seqlen, batchsize, hiddensize)
+        '''
+        GRU输入
+        序列输入：(seqlen, batchSize, hiddenSize)
+        隐藏层输入：(nlayers * nDirections, batchSize,hiddenSize)
+        
+        GRU输出
+        序列输出：(seqlen, batchSize, hiddenSize * nDirections)
+        隐藏层输出：(nLayers * nDirections, batchSize, hiddenSize)
+        '''
+        self.gru = torch.nn.GRU(hidden_size, hidden_size, n_layers, bidirectional=bidirectional)
+
+        self.fc = torch.nn.Linear(hidden_size * self.n_directions, output_size) # 如果是双向的，会有两个hidden拼在一块，所以size要乘2
+
+    def _init_hidden(self, batch_size):
+        hidden = torch.zeros(self.n_layers * self.n_directions, batch_size, self.hidden_size) # 前置输入，也要考虑是否是单向还是双向
+        return create_tensor(hidden)
+
+    def forward(self, input, seq_lengths):
+        input = input.t() # 这一步是在做转置，将输入的batchSize × seqlen  转置为 seqlen × batchSize 这个才是embedding层需要的维度
+        batch_size = input.size(1) # 就是转置之后的batchSize
+
+        hidden = self._init_hidden(batch_size)
+        embedding = self.embedding(input)
+
+        gru_input = pack_padded_sequence(embedding, seq_lengths)
+
+        output, hidden = self.gru(gru_input, hidden)
+        if self.n_directions == 2:
+            hidden_cat = torch.cat([hidden[-1], hidden[-2]], dim=1)
+        else:
+            hidden_cat = hidden[-1]
+
+        fc_output = self.fc(hidden_cat)
+        return fc_output
+```
+
+
+
+##### 代码补充
+
+**输出的转置：**
+
+![image-20241104111749673](./assets/image-20241104111749673.png)
+
+**GRU的` pack_padded_sequence(embedding, seq_lengths)`:**
+
+经历完转置之后的数据还需要经过一个embedding层，经历完embedding之后，数据变成这样：
+
+![image-20241104114720218](./assets/image-20241104114720218.png)
+
+**注意：这里图片标红的地方出错了，都应该是同一个数字……**
+
+在数据处理的时候，我们为了统一数据的长度，为短的序列最后添0，但是添加的这些0是进入到模型当中是没有作用的，只会白白浪费计算资源，因此在GRU当中提出了将序列压缩进行处理：
+
+![image-20241104115330360](./assets/image-20241104115330360.png)
+
+将序列中非0的组成一个新的数据，然后把长度依次记下来，但是如果这样打包的话会出现错误，必须降序打包！
+
+![image-20241104115627393](./assets/image-20241104115627393.png)
+
+然后再经过嵌入层，变化过程如下：
+
+![image-20241104115657485](./assets/image-20241104115657485.png)
+
+![image-20241104120013013](./assets/image-20241104120013013.png)
+
+这里就是横着取，表示批量取每个样本的x1，即名字的第一个字符。
+
+**这么重排序的目的就是为了减少计算量**
 
 # 完成基础篇之后的学习路线
 
@@ -4539,6 +4712,12 @@ Accuracy on test set: 98 %
 ![image-20241025192533805](./assets/image-20241025192533805.png)
 
 使用GRU模型训练“hello”---->"ohlol"
+
+## 作业七
+
+![image-20241104231915630](./assets/image-20241104231915630.png)
+
+dataset： https://www.kaggle.com/c/sentiment-analysis-on-movie-reviews/data
 
 # Pytorch为什么输入是小批量的数据？
 
