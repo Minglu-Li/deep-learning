@@ -142,3 +142,78 @@ c(1,2,3)
 CALL 1
 ```
 
+## `@property` 装饰器
+
+这段代码定义了一个名为 `AttentionDecoder` 的类，继承自 `d2l.Decoder`。下面是对代码的详细解释：
+
+```python
+class AttentionDecoder(d2l.Decoder):
+    def __init__(self, **kwargs):
+        super(AttentionDecoder, self).__init__(**kwargs)
+
+    @property
+    def attention_weight(self):
+        raise NotImplementedError
+```
+
+### 1. 类的定义与继承
+
+```python
+class AttentionDecoder(d2l.Decoder):
+```
+
+- **`AttentionDecoder`**：这是一个自定义的解码器类，通常用于实现带有注意力机制（Attention Mechanism）的解码器部分。
+- **`d2l.Decoder`**：`AttentionDecoder` 继承自 `d2l.Decoder`，这意味着它会继承 `d2l.Decoder` 类中的所有属性和方法，并可以在此基础上进行扩展或重写。
+
+### 2. 构造函数 `__init__`
+
+```python
+def __init__(self, **kwargs):
+    super(AttentionDecoder, self).__init__(**kwargs)
+```
+
+- **`__init__` 方法**：这是类的构造函数，用于初始化对象实例。
+- **`\**kwargs`**：表示接受任意数量的关键字参数，并将它们传递给父类的构造函数。
+- **`super(AttentionDecoder, self).__init__(\**kwargs)`**：调用父类 (`d2l.Decoder`) 的构造函数，确保父类的初始化逻辑得以执行。
+
+### 3. `@property` 装饰器
+
+```python
+@property
+def attention_weight(self):
+    raise NotImplementedError
+```
+
+- **`@property`**：这是一个装饰器，用于将一个方法转换为属性访问。使用 `@property` 后，可以通过 `instance.attention_weight` 的方式访问，而无需像调用方法那样使用括号（`instance.attention_weight()`）。
+
+  **示例：**
+
+  ```python
+  decoder = AttentionDecoder()
+  weight = decoder.attention_weight  # 通过属性访问，而不是方法调用
+  ```
+
+### 4. `raise NotImplementedError`
+
+```python
+raise NotImplementedError
+```
+
+- **`NotImplementedError`**：这是一个内置的异常，用于指示某个方法或功能尚未实现。在基类中定义抽象方法时，经常会使用这个异常，以确保子类必须重写该方法。
+
+  **作用：**
+
+  - **强制子类实现**：当 `AttentionDecoder` 被继承时，子类必须实现 `attention_weight` 属性。如果子类没有实现，当尝试访问 `attention_weight` 时，会抛出 `NotImplementedError`，提醒开发者需要在子类中实现该属性。
+
+  **示例：**
+
+  ```python
+  class MyAttentionDecoder(AttentionDecoder):
+      @property
+      def attention_weight(self):
+          return self._compute_attention_weight()
+  
+      def _compute_attention_weight(self):
+          # 实现具体的注意力权重计算逻辑
+          return some_weight
+  ```

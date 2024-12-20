@@ -224,6 +224,769 @@
 
 自注意力有非常多的变形，论文 “Long Range Arena: A Benchmark for Efficient Transformers” 里面比较了各种不同的自注意力的变形。自注意力最大的问题是其运算量非常大，如 何减少自注意力的运算量是未来可研究的重点方向。自注意力最早是用在 Transformer 上面， 所以很多人讲 Transformer 的时候，其实指的是自注意力。有人说广义的 Transformer 指的就 是自注意力，所以后来各种的自注意力的变形都叫做是 xxformer，比如 Linformer、Performer、 Reformer 等等。这些新的 xxformer 往往比原来的 Transformer 性能差一点，但是速度会比较 快。论文 “Efficient Transformers: A Survey” 介绍了各种自注意力的变形。
 
+## 加性注意力与点积注意力
+
+正如上面提到的，softmax操作用于输出一个概率分布作为注意力权重。 在某些情况下，并非所有的值都应该被纳入到注意力汇聚中。
+
+为了仅将有意义的词元作为值来获取注意力汇聚， 可以指定一个有效序列长度（即词元的个数）， 以便在计算softmax时过滤掉超出指定范围的位置。 下面的masked_softmax函数 实现了这样的掩蔽softmax操作（masked softmax operation）， 其中任何超出有效长度的位置都被掩蔽并置为0。
+
+```python
+def sequence_mask(X, valid_len, value=0):
+    """在序列中屏蔽不相关的项"""
+    maxlen = X.size(1)
+    mask = torch.arange((maxlen), dtype=torch.float32, device=X.device)[None, :] < valid_len[:, None]
+    X[~mask] = value
+    return X
+#@save
+'''
+masked_softmax的意思就相当于只考虑前valid_lens的数据。
+比如说NLP中，为了保持句子的长度相等，对于短句子，在后面打padding，
+但是这些padding对最后的结果是没有作用的，因此，在最后计算q-k的时候，
+这部分就可以不考虑。
+这里其实就是提前告诉你，某一个样本前valid_lens是有效的。
+'''
+def masked_softmax(X, valid_lens):
+    """通过在最后一个轴上掩蔽元素来执行softmax操作"""
+    # X:3D张量，valid_lens:1D或2D张量
+    if valid_lens is None:
+        return nn.functional.softmax(X, dim=-1)
+    else:
+        shape = X.shape
+        if valid_lens.dim() == 1:
+            valid_lens = torch.repeat_interleave(valid_lens, shape[1])
+        else:
+            valid_lens = valid_lens.reshape(-1)
+        # 最后一轴上被掩蔽的元素使用一个非常大的负值替换，从而其softmax输出为0
+        X = sequence_mask(X.reshape(-1, shape[-1]), valid_lens,
+                              value=-1e6)
+        return nn.functional.softmax(X.reshape(shape), dim=-1)
+```
+
+为了演示此函数是如何工作的， 考虑由两个2×4矩阵表示的样本， 这两个样本的有效长度分别为2
+和3。 经过掩蔽softmax操作，超出有效长度的值都被掩蔽为0。
+
+<img src="./assets/image-20241214211730540.png" alt="image-20241214211730540" style="zoom: 67%;" />
+
+### 加性注意力
+
+![image-20241214211924197](./assets/image-20241214211924197.png)
+
+```python
+class AdditiveAttention(nn.Module):
+    '''加性注意力'''
+    def __init__(self, key_size, query_size, num_hiddens, dropout, **Kwargs):
+        super(AdditiveAttention, self).__init__(**Kwargs)
+        self.W_k = nn.Linear(key_size, num_hiddens, bias=False)
+        self.W_q = nn.Linear(query_size, num_hiddens, bias=False)
+        self.w_v = nn.Linear(num_hiddens, 1, bias=False)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, queries, keys, values, valid_lens):
+        queries, keys = self.W_q(queries), self.W_k(keys)
+        print(queries.shape + keys.shape)
+        features = queries.unsqueeze(2) + keys.unsqueeze(1)
+        print(features.shape)
+        features = torch.tanh(features)
+        print(features.shape)
+        scores = self.w_v(features).squeeze(-1)
+        print(scores.shape)
+        self.attention_weights = masked_softmax(scores, valid_lens)
+        print(self.attention_weights.shape)
+        return torch.bmm(self.dropout(self.attention_weights), values)
+```
+
+> **对于` queries, keys = self.W_q(queries), self.W_k(keys)`的维度变换**
+
+在加性注意力机制中，`queries` 和 `keys` 的维度扩展是为了让每个查询（query）能够与所有的键（key）进行交互，从而计算出每个查询与所有键之间的相似度分数。为了实现这一点，我们需要确保广播机制（broadcasting mechanism）可以正确地应用，这通常涉及到增加新的维度。
+
+假设原始的 `queries` 和 `keys` 都是三维张量，其形状分别为 `(batch_size, num_queries, query_size)` 和 `(batch_size, num_keys, key_size)`。这里：
+
+- `batch_size` 是批量大小；
+- `num_queries` 是查询的数量；
+- `query_size` 是每个查询的特征维度；
+- `num_keys` 是键的数量；
+- `key_size` 是每个键的特征维度。
+
+经过线性变换之后，`queries` 和 `keys` 的形状变为 `(batch_size, num_queries, num_hiddens)` 和 `(batch_size, num_keys, num_hiddens)`，其中 `num_hiddens` 是隐藏层的维度，也就是线性变换后的输出维度。
+
+接下来，在进行维度扩展之前，我们先对 `queries` 和 `keys` 应用了线性变换以将它们映射到相同的空间中（即相同的 `num_hiddens` 维度），这样它们就可以直接相加了。
+
+**扩展维度**
+
+`unsqueeze` 方法
+
+`queries.unsqueeze(2)`：在 `queries `的第三个维度（索引为2）插入一个新的轴，使得其形状从 `(batch_size, num_queries, num_hiddens)` 变为` (batch_size, num_queries, 1, num_hiddens)`。
+`keys.unsqueeze(1)`：在 keys 的第二个维度（索引为1）插入一个新的轴，使得其形状从 `(batch_size, num_keys, num_hiddens)` 变为` (batch_size, 1, num_keys, num_hiddens)`。
+
+- 对于 `queries`，我们在第三个维度上添加了一个新轴，使得其形状变为 `(batch_size, num_queries, 1, num_hiddens)`。
+- 对于 `keys`，我们在第二个维度上添加了一个新轴，使得其形状变为 `(batch_size, 1, num_keys, num_hiddens)`。
+
+这样做之后，`queries` 中的每个查询都可以与 `keys` 中的所有键通过广播机制进行逐元素相加。广播机制会自动扩展较小的数组，直到两个数组的形状匹配，以便执行逐元素操作。
+
+**广播求和后的结果**
+
+当我们将这两个扩展后的张量相加时，广播机制会导致以下情况：
+
+- `queries` 的形状 `(batch_size, num_queries, 1, num_hiddens)` 将被广播为 `(batch_size, num_queries, num_keys, num_hiddens)`。
+- `keys` 的形状 `(batch_size, 1, num_keys, num_hiddens)` 同样会被广播为 `(batch_size, num_queries, num_keys, num_hiddens)`。
+
+因此，最终的结果是一个形状为 `(batch_size, num_queries, num_keys, num_hiddens)` 的张量，表示每个查询与所有键之间的交互结果。这个四维张量中的每一个位置 `(i, j, k, l)` 表示的是第 `i` 个样本中第 `j` 个查询与第 `k` 个键在第 `l` 个隐藏维度上的交互值。
+
+**总结**
+
+简而言之，`queries` 和 `keys` 在进行维度扩展之后的形状分别是 `(batch_size, num_queries, 1, num_hiddens)` 和 `(batch_size, 1, num_keys, num_hiddens)`，而它们相加之后的结果形状为 `(batch_size, num_queries, num_keys, num_hiddens)`。这个过程允许每个查询与所有键进行比较，从而为后续计算注意力权重做准备。
+
+这句代码 `scores = self.w_v(features).squeeze(-1)` 的作用是将加性注意力机制中计算的特征（`features`）转换为注意力分数（`scores`），并调整输出张量的形状。下面我将详细解释这行代码的工作原理以及 `squeeze` 函数的用法。
+
+
+>  `self.w_v(features)`
+
+
+1. `self.w_v(features)`
+
+首先，`self.w_v` 是一个线性变换层（`nn.Linear`），它的输入维度是 `num_hiddens`，输出维度是 `1`。这意味着它会对每个隐藏状态应用一个线性变换，并且最终只输出一个标量值（因为输出维度是1）。具体来说：
+
+- 输入 `features` 的形状是 `(batch_size, num_queries, num_keys, num_hiddens)`。
+- 经过 `self.w_v` 线性变换后，输出的形状变为 `(batch_size, num_queries, num_keys, 1)`。这里每个查询与每个键之间的交互结果被映射为一个单一的分数，表示它们之间的相关性或匹配度。
+
+2. `.squeeze(-1)`
+
+接下来，`.squeeze(-1)` 函数用于移除最后一个维度（即形状中的 `-1` 或最内层维度），因为它是一个大小为1的单例维度。`squeeze` 函数的作用是从张量的形状中删除所有大小为1的维度，或者指定特定的大小为1的维度来删除。在这个例子中，我们只移除最后一个维度（`-1` 表示最后一维）。
+
+- 移除最后一个维度后，`scores` 的形状变为 `(batch_size, num_queries, num_keys)`。这个形状表示每个查询与所有键之间的注意力分数，其中 `num_queries` 和 `num_keys` 分别对应于查询的数量和键的数量。
+
+3. 最终 `scores` 的维度
+
+因此，经过上述操作之后，`scores` 的最终形状是 `(batch_size, num_queries, num_keys)`，这正是我们希望得到的结果，因为我们需要为每个查询计算出相对于所有键的注意力分数，以便后续使用这些分数来对相应的值进行加权求和。
+
+`self.attention_weights = masked_softmax(scores, valid_lens)`获取经过Softmax之后的注意力权重矩阵
+
+
+> `torch.bmm(self.dropout(self.attention_weights), values)`的作用
+
+首先，`self.dropout` 是一个 `Dropout` 层，用于在训练期间随机丢弃一部分注意力权重，以防止模型过拟合。`Dropout` 在推理或评估模式下通常会被禁用，因此不会影响最终的输出。
+
+输入：`self.attention_weights`，形状为 `(batch_size, num_queries, num_keys)`。
+输出：形状不变，仍然是 `(batch_size, num_queries, num_keys)`，但在训练过程中某些元素可能被设置为0。
+
+
+为了更好地理解这个加权求和的过程，让我们具体看一下在注意力机制中是如何使用 `torch.bmm` 函数来实现这一操作的。我们将一步步解析计算过程。
+
+背景
+
+- **注意力权重** (`attention_weights`)：形状为 `(batch_size, num_queries, num_keys)` 的张量，表示每个查询对各个键的关注程度。
+- **值** (`values`)：形状为 `(batch_size, num_keys, value_dim)` 的张量，表示每个键对应的值向量。
+
+具体的加权求和过程
+
+1. **批量矩阵乘法（Batch Matrix Multiplication）**：
+   - 使用 `torch.bmm` 函数对 `attention_weights` 和 `values` 进行批量矩阵乘法。
+   - `torch.bmm` 会逐个样本地处理这两个三维张量，并执行矩阵乘法。
+
+2. **矩阵乘法的具体步骤**：
+
+   对于每个样本（假设 `batch_size=1` 以简化说明），我们有：
+
+   - 注意力权重矩阵：形状为 `(num_queries, num_keys)`。
+   - 值矩阵：形状为 `(num_keys, value_dim)`。
+
+   矩阵乘法的过程如下：
+
+   - 每个查询（`num_queries` 中的一个）对应一行注意力权重。
+   - 每个键（`num_keys` 中的一个）对应一列值。
+   - 当你将注意力权重矩阵与值矩阵相乘时，实际上是对于每个查询，将其对所有键的注意力权重分别与相应键的值进行点乘（即元素相乘），然后将这些结果相加。
+
+3. **点乘与求和**：
+
+   - 对于每个查询，它与每个键的注意力权重相乘的结果是一个标量。
+   - 将这些标量与相应的值向量相乘，得到一个新的值向量。
+   - 最后，将所有这些新的值向量相加，得到一个综合的值向量。
+
+4. **最终输出**：
+
+   - 结果是一个形状为 `(batch_size, num_queries, value_dim)` 的张量。
+   - 每个查询现在都有了一个综合考虑了所有键的加权表示。
+
+```python
+'''
+torch.normal(0, 1, (2, 1, 20)) 创建了一个形状为 (2, 1, 20) 的张量，其元素是从均值为0、标准差为1的正态分布中随机抽取的。
+'''
+queries, keys = torch.normal(0, 1, (2, 1, 20)), torch.ones((2, 10,2))
+'''
+生成一个包含从 0 到 39（共40个）的等间距值的一维张量。
+将上述一维张量重塑为形状为 (1, 10, 4) 的三维张量。
+沿指定维度重复张量的内容。这里，我们将该张量在第一个维度（批次维度）上重复两次，而在其他两个维度上保持不变。
+tensor([[[ 0.,  1.,  2.,  3.],
+         [ 4.,  5.,  6.,  7.],
+         [ 8.,  9., 10., 11.],
+         [12., 13., 14., 15.],
+         [16., 17., 18., 19.],
+         [20., 21., 22., 23.],
+         [24., 25., 26., 27.],
+         [28., 29., 30., 31.],
+         [32., 33., 34., 35.],
+         [36., 37., 38., 39.]],
+
+        [[ 0.,  1.,  2.,  3.],
+         [ 4.,  5.,  6.,  7.],
+         [ 8.,  9., 10., 11.],
+         [12., 13., 14., 15.],
+         [16., 17., 18., 19.],
+         [20., 21., 22., 23.],
+         [24., 25., 26., 27.],
+         [28., 29., 30., 31.],
+         [32., 33., 34., 35.],
+         [36., 37., 38., 39.]]])
+'''
+values = torch.arange(40, dtype=torch.float32).reshape(1, 10, 4).repeat(2, 1, 1)
+valid_lens = torch.tensor([2, 6])
+
+attention = AdditiveAttention(key_size=2, query_size=20, num_hiddens=8, dropout=0.1)
+attention.eval()
+attention(queries, keys, values, valid_lens)
+print(attention(queries, keys, values, valid_lens).shape)
+```
+
+输出：
+
+```python
+torch.Size([2, 1, 8, 2, 10, 8])
+torch.Size([2, 1, 10, 8])
+torch.Size([2, 1, 10, 8])
+torch.Size([2, 1, 10])
+torch.Size([2, 1, 10])
+torch.Size([2, 1, 8, 2, 10, 8])
+torch.Size([2, 1, 10, 8])
+torch.Size([2, 1, 10, 8])
+torch.Size([2, 1, 10])
+torch.Size([2, 1, 10])
+torch.Size([2, 1, 4])
+```
+
+```python
+def show_heatmaps(matrices, xlabel, ylabel, titles=None, figsize=(2.5, 2.5),
+                  cmap='Reds'):
+    """显示矩阵热图"""
+    d2l.use_svg_display()
+    num_rows, num_cols = matrices.shape[0], matrices.shape[1]
+    fig, axes = d2l.plt.subplots(num_rows, num_cols, figsize=figsize,
+                                 sharex=True, sharey=True, squeeze=False)
+    for i, (row_axes, row_matrices) in enumerate(zip(axes, matrices)):
+        for j, (ax, matrix) in enumerate(zip(row_axes, row_matrices)):
+            pcm = ax.imshow(matrix.detach().numpy(), cmap=cmap)
+            if i == num_rows - 1:
+                ax.set_xlabel(xlabel)
+            if j == 0:
+                ax.set_ylabel(ylabel)
+            if titles:
+                ax.set_title(titles[j])
+    fig.colorbar(pcm, ax=axes, shrink=0.6);
+show_heatmaps(attention.attention_weights.reshape((1, 1, 2, 10)),
+                  xlabel='Keys', ylabel='Queries')
+```
+
+![image-20241214212127782](./assets/image-20241214212127782.png)
+
+这里attention.attention_weights.reshape为(2, 1, 10),`valid_lens = torch.tensor([2, 6])`因此第一个样本只关注前2个，后面都变换为0，第二个样本只关注前6个，后面都变为0。
+
+### 缩放点积注意力
+
+![image-20241214212223167](./assets/image-20241214212223167.png)
+
+```python
+class DotProductAttention(nn.Module):
+    '''缩放点击注意力'''
+    def __init__(self, dropout, **Kwargs):
+        super(DotProductAttention, self).__init__(**Kwargs)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, queries, keys, values, valid_lens = None):
+        d = queries.shape[-1]
+        scores = torch.bmm(queries, keys.transpose(1, 2)) / math.sqrt(d)
+        self.attention_weights = masked_softmax(scores, valid_lens)
+        return torch.bmm(self.dropout(self.attention_weights), values)
+```
+
+```python
+queries = torch.normal(0, 1, (2, 1, 2))
+attention = DotProductAttention(dropout=0.5)
+attention.eval()
+attention(queries, keys, values, valid_lens)
+```
+
+```python
+tensor([[[ 2.0000,  3.0000,  4.0000,  5.0000]],
+
+        [[10.0000, 11.0000, 12.0000, 13.0000]]])
+```
+
+```python
+show_heatmaps(attention.attention_weights.reshape((1, 1, 2, 10)),
+                  xlabel='Keys', ylabel='Queries')
+```
+
+![image-20241214212314717](./assets/image-20241214212314717.png)
+
+## 讲注意力机制使用在Seq2Seq模型当中
+
+![image-20241212230128369](./assets/image-20241212230128369.png)
+
+要预测下一个词的时候，将当前预测出的词作为query，编码器各个状态作为(key,value)，进行attention，来找到对预测下一个词有用的原文
+
+k-v就是编对每一个词的编码器输出，q就是解码器对上一个词的预测输出；
+
+原始的seq2seq问题：
+
+![image-20241214211031582](./assets/image-20241214211031582.png)
+
+而引入注意力机制之后，编码器的输出是所有文本的加权得到k-v，每次解码器利用最近预测得到的词作为q，从而找到最相近的v，然后再次投入到解码器中的RNN，从而预测得到下一个单词。
+
+导入包
+
+```python
+import torch
+from torch import nn
+from d2l import torch as d2l
+```
+
+带有注意力机制的解码器基本接口
+
+```python
+class AttentionDecoder(d2l.Decoder):
+    def __init__(self, **kwargs):
+        super(AttentionDecoder, self).__init__(**kwargs)
+
+    @property
+    def attention_weight(self):
+        raise NotImplementedError
+```
+
+Atttention作用在decoder上，
+
+```python
+class Seq2SeqAttentionDecoder(AttentionDecoder):
+    def __init__(self, vocab_size, embed_size, num_hiddens, num_layers,
+                 dropout=0, **kwargs):
+        super(Seq2SeqAttentionDecoder, self).__init__(**kwargs)
+        self.attention = d2l.AdditiveAttention(
+            num_hiddens, num_hiddens, num_hiddens, dropout)
+        self.embedding = nn.Embedding(vocab_size, embed_size)
+        self.rnn = nn.GRU(
+            embed_size + num_hiddens, num_hiddens, num_layers,
+            dropout=dropout)
+        self.dense = nn.Linear(num_hiddens, vocab_size)
+
+    def init_state(self, enc_outputs, enc_valid_lens, *args):
+        # outputs的形状为(batch_size，num_steps，num_hiddens).
+        # hidden_state的形状为(num_layers，batch_size，num_hiddens)
+        outputs, hidden_state = enc_outputs
+        return (outputs.permute(1, 0, 2), hidden_state, enc_valid_lens)
+
+    def forward(self, X, state):
+        # enc_outputs的形状为(batch_size,num_steps,num_hiddens).
+        # hidden_state的形状为(num_layers,batch_size,
+        # num_hiddens)
+        enc_outputs, hidden_state, enc_valid_lens = state
+        # 输出X的形状为(num_steps,batch_size,embed_size)
+        X = self.embedding(X).permute(1, 0, 2)
+        outputs, self._attention_weights = [], []
+        for x in X:
+            # query的形状为(batch_size,1,num_hiddens)
+            query = torch.unsqueeze(hidden_state[-1], dim=1)
+            # context的形状为(batch_size,1,num_hiddens)
+            context = self.attention(
+                query, enc_outputs, enc_outputs, enc_valid_lens)
+            # 在特征维度上连结
+            x = torch.cat((context, torch.unsqueeze(x, dim=1)), dim=-1)
+            # 将x变形为(1,batch_size,embed_size+num_hiddens)
+            out, hidden_state = self.rnn(x.permute(1, 0, 2), hidden_state)
+            outputs.append(out)
+            self._attention_weights.append(self.attention.attention_weights)
+        # 全连接层变换后，outputs的形状为
+        # (num_steps,batch_size,vocab_size)
+        outputs = self.dense(torch.cat(outputs, dim=0))
+        return outputs.permute(1, 0, 2), [enc_outputs, hidden_state,
+                                          enc_valid_lens]
+
+    @property
+    def attention_weights(self):
+        return self._attention_weights
+```
+
+选取超参数进行测试：
+
+```python
+embed_size, num_hiddens, num_layers, dropout = 32, 32, 2, 0.1
+batch_size, num_steps = 64, 10
+lr, num_epochs, device = 0.005, 250, d2l.try_gpu()
+
+train_iter, src_vocab, tgt_vocab = d2l.load_data_nmt(batch_size, num_steps)
+encoder = d2l.Seq2SeqEncoder(
+    len(src_vocab), embed_size, num_hiddens, num_layers, dropout)
+decoder = Seq2SeqAttentionDecoder(
+    len(tgt_vocab), embed_size, num_hiddens, num_layers, dropout)
+net = d2l.EncoderDecoder(encoder, decoder)
+d2l.train_seq2seq(net, train_iter, lr, num_epochs, tgt_vocab, device)
+```
+
+![image-20241220161726953](./assets/image-20241220161726953.png)
+
+利用得到的模型进行测试：
+
+```python
+engs = ['go .', "i lost .", 'he\'s calm .', 'i\'m home .']
+fras = ['va !', 'j\'ai perdu .', 'il est calme .', 'je suis chez moi .']
+for eng, fra in zip(engs, fras):
+    translation, dec_attention_weight_seq = d2l.predict_seq2seq(
+        net, eng, src_vocab, tgt_vocab, num_steps, device, True)
+    print(f'{eng} => {translation}, ',
+          f'bleu {d2l.bleu(translation, fra, k=2):.3f}')
+```
+
+![image-20241220161755109](./assets/image-20241220161755109.png)
+
+查看一下注意力权重：
+
+```python
+attention_weights = torch.cat([step[0][0][0] for step in dec_attention_weight_seq], 0).reshape((
+    1, 1, -1, num_steps))
+# 加上一个包含序列结束词元
+def show_heatmaps(matrices, xlabel, ylabel, titles=None, figsize=(2.5, 2.5),
+                  cmap='Reds'):
+    """显示矩阵热图"""
+    d2l.use_svg_display()
+    num_rows, num_cols = matrices.shape[0], matrices.shape[1]
+    fig, axes = d2l.plt.subplots(num_rows, num_cols, figsize=figsize,
+                                 sharex=True, sharey=True, squeeze=False)
+    for i, (row_axes, row_matrices) in enumerate(zip(axes, matrices)):
+        for j, (ax, matrix) in enumerate(zip(row_axes, row_matrices)):
+            pcm = ax.imshow(matrix.detach().numpy(), cmap=cmap)
+            if i == num_rows - 1:
+                ax.set_xlabel(xlabel)
+            if j == 0:
+                ax.set_ylabel(ylabel)
+            if titles:
+                ax.set_title(titles[j])
+    fig.colorbar(pcm, ax=axes, shrink=0.6);
+show_heatmaps(
+    attention_weights[:, :, :, :len(engs[-1].split()) + 1].cpu(),
+    xlabel='Key positions', ylabel='Query positions')
+```
+
+![image-20241220162007789](./assets/image-20241220162007789.png)
+
+----
+
+> `self.embedding = nn.Embedding(vocab_size, embed_size)`
+
+在自然语言处理中，输入的单词通常是以索引形式表示的。例如，在一个词汇表大小为 $\text{vocabsize} = 10,000$ 的模型中：
+
+- **单词 "hello"** 的索引可能是 **27**。
+- **单词 "world"** 的索引可能是 **42**。
+
+然而，索引本身并没有携带任何关于单词含义或关系的信息。
+为了让模型学习到单词之间的 **语义关系**，需要将索引映射到一个连续的、固定维度的向量空间中（Embedding Space）。
+
+`nn.Embedding` 的核心功能是：
+将输入的单词索引映射到一个维度为 `embed_size` 的向量。例如：
+
+- 输入：一个索引序列 `X`，形状为 `(batch_size, num_steps)`，其中每个值代表单词索引。
+- 输出：通过 `nn.Embedding`，索引被映射为向量，输出形状变为 **(batch_size, num_steps, embed_size)**。
+
+举例：
+
+假设：
+
+- **`batch_size=2`**：2个样本。
+- **`num_steps=3`**：每个样本有3个单词。
+- **`embed_size=4`**：嵌入向量的维度是4。
+
+```python
+X = [[2, 5, 7],
+     [1, 3, 4]]  # 形状为 (batch_size=2, num_steps=3)
+```
+
+**nn.Embedding 操作**：
+
+通过查找嵌入矩阵 `W`（形状为 `vocab_size x embed_size`）的对应行：
+
+- 输入索引 `2` → 输出向量 `W[2]`，形状为 `(embed_size=4)`。
+- 输入索引 `5` → 输出向量 `W[5]`。
+- 依次类推。
+
+```python
+X_embed = [[[0.1, 0.2, 0.3, 0.4],   # W[2]
+            [0.5, 0.6, 0.7, 0.8],   # W[5]
+            [0.9, 1.0, 1.1, 1.2]],  # W[7]
+
+           [[0.2, 0.3, 0.4, 0.5],   # W[1]
+            [0.6, 0.7, 0.8, 0.9],   # W[3]
+            [1.0, 1.1, 1.2, 1.3]]]  # W[4]
+```
+
+输出形状为 **(batch_size=2, num_steps=3, embed_size=4)**。
+
+嵌入层中的权重矩阵 `W`（形状为 `vocab_size x embed_size`）是在训练过程中 **自动学习** 的。
+
+它会通过反向传播根据任务目标（例如翻译、文本生成等）来优化，使得单词的嵌入向量能够反映单词的语义和上下文关系。
+
+----
+
+> `self.rnn = nn.GRU(embed_size + num_hiddens, num_hiddens, num_layers, dropout=dropout)`
+
+为什么是`embed_size + num_hiddens`?
+
+**当前时间步的词嵌入向量**（`embed_size`）：
+
+- 由当前时间步输入单词通过嵌入层 `nn.Embedding` 得到。
+
+**注意力上下文向量**（`num_hiddens`）：
+
+- 通过注意力机制得到的、编码器输出的加权求和结果。
+
+序列模型的时间步：
+
+序列任务的输入是一系列有顺序的数据，例如句子中的单词、视频帧、时间序列数据等。
+
+**时间步**：表示序列中数据的第几个元素（或者时间点）。
+
+例如，句子 `"I love learning"` 可以分解为 **3个时间步**：
+
+- **时间步1**：`I`
+- **时间步2**：`love`
+- **时间步3**：`learning`
+
+在模型中，RNN 会逐个处理这些时间步的数据，每个时间步都会有输入、隐藏状态和输出。
+
+----
+
+> ```python
+> def init_state(self, enc_outputs, enc_valid_lens, *args):
+>     outputs, hidden_state = enc_outputs
+>     return (outputs.permute(1, 0, 2), hidden_state, enc_valid_lens)
+> ```
+>
+> 维度变换过程
+
+ **`enc_outputs` 的形状变换**，从 **`(batch_size, num_steps, num_hiddens)`** 转换到 **`(num_steps, batch_size, num_hiddens)`** 
+
+`enc_outputs` 的初始形状为 **`(batch_size, num_steps, num_hiddens)`**：
+
+- **`batch_size`**：批量大小，即一次输入多少个样本。
+- **`num_steps`**：输入序列的长度（即时间步的数量）。
+- **`num_hiddens`**：隐藏层的单元数（特征维度）。
+
+**为什么要转换?**
+
+- RNN 或 GRU 在 PyTorch 中要求输入的形状为 `(num_steps, batch_size, feature_dim)`
+  - **`num_steps`**：时间步，放在第一个维度。
+  - **`batch_size`**：批量大小，放在第二个维度。
+  - **`feature_dim`**：特征的维度（如隐藏层大小）。
+
+为了满足 RNN 输入的要求，必须对 `enc_outputs` 进行 **维度置换**。
+
+`torch.Tensor.permute()` 函数可以对张量的维度进行重排。
+
+```python
+Tensor.permute(dims)
+```
+
+`dims`：一个元组，表示新的维度顺序。
+
+原始张量的维度会按照 `dims` 指定的顺序进行重新排列。
+
+原始形状：**`(batch_size, num_steps, num_hiddens)`**
+目标形状：**`(num_steps, batch_size, num_hiddens)`**
+
+为了实现这种转换，使用 **`permute`**：`enc_outputs = enc_outputs.permute(1, 0, 2)`
+
+----
+
+:small_airplane:![018252AE](./assets/018252AE.png)**前向传播过程**：
+
+好的！我们将逐行分析 `forward` 方法中的 **前向传播过程**，并详细说明变量的**维度转换**。这段代码是一个基于 **注意力机制的 Seq2Seq 解码器**，在每个时间步处理输入单词并利用注意力机制动态聚焦编码器的输出。
+
+**1. 输入参数**
+
+- **`X`**: 解码器的输入序列，形状为 `(batch_size, num_steps)`，每个值是单词的索引。
+
+- `state`
+
+  : 解码器的初始状态，包含：
+
+  - `enc_outputs`：编码器的输出，形状为 `(batch_size, num_steps, num_hiddens)`。
+  - `hidden_state`：解码器的隐藏状态，形状为 `(num_layers, batch_size, num_hiddens)`。
+  - `enc_valid_lens`：编码器输出的有效长度，用于注意力机制中屏蔽无效的填充部分。
+
+**2. 嵌入层：将单词索引映射为嵌入向量**
+
+```python
+X = self.embedding(X).permute(1, 0, 2)
+```
+
+- **输入**：`X` 的形状为 `(batch_size, num_steps)`。
+
+- 输出
+
+  ：通过 
+
+  ```
+  nn.Embedding
+  ```
+
+  ，将索引映射到 
+
+  ```
+  embed_size
+  ```
+
+   维度的向量，结果形状为：
+
+  - **`(batch_size, num_steps, embed_size)`**。
+
+- 维度变换
+
+  ：使用 
+
+  ```
+  .permute(1, 0, 2)
+  ```
+
+   调整维度顺序为：
+
+  - **`(num_steps, batch_size, embed_size)`**。
+
+- **原因**：RNN 通常要求输入的时间步维度在第一维，方便逐时间步地处理数据。
+
+**3. 初始化输出和注意力权重列表**
+
+```python
+outputs, self._attention_weights = [], []
+```
+
+- **`outputs`**：保存每个时间步 RNN 的输出。
+- **`self._attention_weights`**：保存每个时间步的注意力权重。
+
+**4. 遍历每个时间步的输入**
+
+```python
+for x in X:
+```
+
+- **`X`**：形状为 `(num_steps, batch_size, embed_size)`。
+- **`x`**：每次取出一个时间步的数据，形状为 `(batch_size, embed_size)`。
+
+**5. 计算注意力机制的上下文向量**
+
+```python
+query = torch.unsqueeze(hidden_state[-1], dim=1)
+```
+
+- **`hidden_state[-1]`**：取出解码器隐藏状态的最后一层，形状为 `(batch_size, num_hiddens)`。
+
+- `torch.unsqueeze(..., dim=1)`
+
+  ：在第 1 维增加一个维度，结果形状为：
+
+  - **`(batch_size, 1, num_hiddens)`**。
+
+- **`query`**：用于注意力机制的查询向量。
+
+**计算注意力上下文向量**
+
+```python
+context = self.attention(
+    query, enc_outputs, enc_outputs, enc_valid_lens)
+```
+
+- 输入：
+  - `query`：形状为 `(batch_size, 1, num_hiddens)`。
+  - `enc_outputs`：形状为 `(batch_size, num_steps, num_hiddens)`，作为注意力的 `key` 和 `value`。
+  - `enc_valid_lens`：有效长度，用于屏蔽无效的填充部分。
+- 输出：
+  - **`context`**：上下文向量，形状为 `(batch_size, 1, num_hiddens)`。
+- **说明**：注意力机制通过 `query` 对 `key` 和 `value` 进行加权求和，得到动态上下文向量。
+
+**6. 拼接注意力上下文向量与当前时间步输入**
+
+```python
+x = torch.cat((context, torch.unsqueeze(x, dim=1)), dim=-1)
+```
+
+- **`context`**：形状为 `(batch_size, 1, num_hiddens)`。
+
+- **`x`**：通过 `torch.unsqueeze(x, dim=1)`，增加时间步维度，形状为 `(batch_size, 1, embed_size)`。
+
+- 拼接：在最后一个维度 (
+
+  ```
+  dim=-1
+  ```
+
+  ) 拼接，结果形状为：
+
+  - **`(batch_size, 1, embed_size + num_hiddens)`**。
+
+**7. 输入 RNN 进行解码**
+
+```python
+out, hidden_state = self.rnn(x.permute(1, 0, 2), hidden_state)
+```
+
+- `x`：当前时间步输入，形状为 
+
+  ```
+  (batch_size, 1, embed_size + num_hiddens)
+  ```
+
+  - 使用 `.permute(1, 0, 2)` 调整维度为 `(1, batch_size, embed_size + num_hiddens)`。
+  - **原因**：RNN 输入的时间步维度必须在第一维。
+
+- **`hidden_state`**：解码器的隐藏状态，形状为 `(num_layers, batch_size, num_hiddens)`。
+
+- 输出：
+
+  - **`out`**：RNN 的输出，形状为 `(1, batch_size, num_hiddens)`。
+  - **`hidden_state`**：更新后的隐藏状态，形状不变 `(num_layers, batch_size, num_hiddens)`。
+
+**8. 保存输出和注意力权重**
+
+```python
+outputs.append(out)
+self._attention_weights.append(self.attention.attention_weights)
+```
+
+- **`out`**：当前时间步的输出，形状为 `(1, batch_size, num_hiddens)`，保存到 `outputs` 列表中。
+- **`attention_weights`**：注意力权重，保存到 `self._attention_weights` 中。
+
+**9. 连接所有时间步的输出**
+
+```python
+outputs = self.dense(torch.cat(outputs, dim=0))
+```
+
+- `torch.cat(outputs, dim=0)`：
+  - 将 `outputs` 列表中的所有时间步输出沿着时间步维度拼接。
+  - 结果形状为 `(num_steps, batch_size, num_hiddens)`。
+- `self.dense`：
+  - 通过全连接层将隐藏状态映射到词汇表大小。
+  - 结果形状变为 `(num_steps, batch_size, vocab_size)`。
+
+**10. 调整输出维度**
+
+```python
+return outputs.permute(1, 0, 2), [enc_outputs, hidden_state, enc_valid_lens]
+```
+
+- **`outputs.permute(1, 0, 2)`**：
+  - 调整维度，将时间步和批量维度交换。
+  - 最终形状为 **`(batch_size, num_steps, vocab_size)`**。
+- **返回值**：
+  - `outputs`：解码器的输出结果。
+  - `state`：包含编码器输出、更新后的隐藏状态和有效长度。
+
+
+
 # Transformer
 
 Sequence-to-sequence (Seq2seq)：Input a sequence, output a sequence.
@@ -400,7 +1163,17 @@ v 接下来会“丢”给全连接网络，这个步骤 q 来自于解码器，
 
 如图 7.27 所示，假设产生“机”，输入`<BOS>`  、“机”，产生一个向量。这个向量一样乘上 一个线性变换得到一个查询 q ′。q ′ 会跟 k 1、k 2、k 3 计算注意力的分数。接着用注意力分数 跟 v 1、v 2、v 3 做加权和，加起来得到 v ′，最后交给全连接网络处理。编码器和解码器都有很多层，但在原始论文中解码器是拿编码器最后一层的输出。但不 一定要这样，读者可参考论文“Rethinking and Improving Natural Language Generation with Layer-Wise Multi-View Decoding” [4]。
 
+## 如何训练Transformer
 
+如图 7.28 所示，Transformer 应该要学到听到“机器学习”的声音信号，它的输出就是“机 器学习”这四个中文字。把`<BOS>` 丢给编码器的时候，其第一个输出应该要跟“机”越接近越好。而解码器的输出是一个概率的分布，这个概率分布跟“机”的独热向量越接近越好。因此我 们会去计算标准答案（Ground Truth）跟分布之间的交叉熵，希望该交叉熵的值越小越好。 每一次解码器在产生一个中文字的时候做了一次类似分类的问题。假设中文字有四千个，就 是做有四千个类别的分类的问题。
+
+<img src="./assets/image-20241121125723871.png" alt="image-20241121125723871" style="zoom:67%;" />
+
+![image-20241121125738581](./assets/image-20241121125738581.png)
+
+<img src="./assets/image-20241121125751919.png" alt="image-20241121125751919" style="zoom:67%;" />
+
+teacher forcing 有点类似于单向的RNN。
 
 # Auto-encoder
 
