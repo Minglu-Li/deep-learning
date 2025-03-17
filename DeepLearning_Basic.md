@@ -5603,3 +5603,21 @@ Pytorch安装的torch与torchvision的cuda版本冲突问题
 
 ![image-20240730160748538](./assets/image-20240730160748538.png)
 
+# 镜像网站
+
+```python
+方法一：pip install 安装包名字 -i http://pypi.doubanio.com/simple/ --trusted-host pypi.doubanio.com //豆瓣镜像网站
+
+方法二：pip install 安装包名字 -i http://pypi.douban.com/simple/ --trusted-host pypi.douban.com //豆瓣
+
+方法三：pip install 安装包名字 -i https://pypi.tuna.tsinghua.edu.cn/simple/ --trusted-host pypi.tuna.tsinghua.edu.cn //清华大学
+
+还有下面几个国内pip 源，大家可以依次按照上面的方法试下
+
+1)http://mirrors.aliyun.com/pypi/simple/ 阿里云
+2)https://pypi.mirrors.ustc.edu.cn/simple/ 中国科技大学
+3) http://pypi.mirrors.ustc.edu.cn/simple/ 中国科学技术大学
+```
+
+conda 配置镜像源：[Anaconda中如何配置国内镜像源安装外部库（含conda永久配置和pip临时配置方法）_conda中科大镜像源-CSDN博客](https://blog.csdn.net/SUNYUAN0627/article/details/130181974)
+

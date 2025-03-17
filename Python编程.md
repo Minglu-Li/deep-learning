@@ -105,6 +105,32 @@ print(list(zipped))
 - 在 Python 3 中，`zip()` 返回一个迭代器，这样节省内存，因为它不需要一次性存储所有的配对结果。
 - 如果需要所有的配对结果（如存储在列表中），可以使用 `list()` 或 `tuple()` 将其转换为列表或元组。
 
+## reshape函数
+
+用于改变张量的形状，而不改变张量中元素的数量和元素本身的值。它可以将一个张量重新组织成不同的维度排列，只要新形状的元素总数与原张量的元素总数相同即可。
+
+假设原始形状为 (2, 3, 6)：
+
+- batch_size = 2
+- 查询个数 = 3
+- num_hiddens = 6
+- num_heads = 2
+
+执行 `reshape(2, 3, 2, -1)`：
+
+```python
+原维度：2 × 3 × 6
+新维度：2 × 3 × 2 × 3 （因为 6 / 2 = 3）
+```
+
+`-1` 是PyTorch的自动计算功能：
+
+- 总元素数 = batch_size × 查询数 × num_hiddens
+- 新维度 = batch_size × 查询数 × num_heads × (num_hiddens/num_heads)
+- 所以 `-1` 会自动计算为 `num_hiddens // num_heads`
+
+
+
 # 语法使用
 
 ## 可变参数
@@ -217,3 +243,17 @@ raise NotImplementedError
           # 实现具体的注意力权重计算逻辑
           return some_weight
   ```
+
+# Pytorch使用
+
+```
+torch.repeat_interleave(valid_lens, repeats=self.num_heads, dim=0)
+```
+
+`torch.repeat_interleave()`是一个PyTorch函数，它会将`valid_lens`中的每个元素沿着指定的维度（`dim=0`）复制`repeats`次。
+
+`valid_lens`可能是一个包含有效长度的向量，形状通常是(batch_size,)或(batch_size, seq_len)。在这里，`repeat_interleave`将会把每个`valid_lens`中的元素复制`num_heads`次。这是因为每个注意力头都需要知道有效长度，而不是只有一个有效长度。
+
+具体来说，如果原来`valid_lens`的形状是`(batch_size,)`，那么经过`repeat_interleave`后，它的形状变为`(batch_size * num_heads,)`。如果原来的形状是`(batch_size, seq_len)`，则复制操作会沿着第一维（即batch维度）进行。
+
+假设`valid_lens`的形状是`(2, 3)`，表示批次大小为2，每个序列有3个有效长度值。如果`num_heads=4`，经过`repeat_interleave`后，`valid_lens`的形状会变成`(8, 3)`，每个批次的有效长度值会被复制4次。
